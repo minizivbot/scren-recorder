@@ -177,6 +177,19 @@ worthless, so the e2e suite checks the artefact three independent ways:
   are checked in Node — so the file is not merely readable by the browser that
   wrote it.
 
+### Measured
+
+From `npm run test:e2e`, on the synthetic capture described below:
+
+- 16.4 MB written across 37 chunks while JS heap went **6.3 MB → 5.0 MB**.
+  Chunks are not accumulating in the tab; a two-hour session is bounded by disk,
+  not memory.
+- Extrapolated two-hour size at that bitrate: **1.57 GB**, in line with the
+  ~1.3 GB the defaults are chosen for.
+- A session interrupted by a real page reload recovered with its markers intact
+  and a duration within one 2 s timeslice of where it was cut, and the partial
+  file parsed cleanly and played.
+
 ### What the tests cannot cover here
 
 The container these were developed in has **no display capture source**, so

@@ -8,11 +8,15 @@
  */
 import { test, expect, waitForRecording } from './fixtures.js';
 
-const RECORD_MS = 90_000;
+const RECORD_MS = 75_000;
 
 test('heap stays flat while the recording grows', async ({ page }) => {
   test.setTimeout(240_000);
   await page.goto('/');
+
+  // Real charts are detailed; a flat synthetic canvas would compress to nearly
+  // nothing and this test would prove nothing about volume.
+  await page.evaluate(() => { window.__capture.noise = true; });
 
   // A high bitrate makes the data volume meaningful within the test's runtime.
   await page.click('#nav-settings');
@@ -58,6 +62,8 @@ test('heap stays flat while the recording grows', async ({ page }) => {
   // Heap must not track the data volume. A recorder buffering chunks in memory
   // would show growth of the same order as grownBytes.
   expect(grownHeap).toBeLessThan(grownBytes * 0.25);
+  // And in absolute terms it should barely move at all.
+  expect(grownHeap).toBeLessThan(25_000_000);
 
   // Extrapolate honestly: at this rate, what would two hours cost on disk?
   const bytesPerMs = grownBytes / RECORD_MS;

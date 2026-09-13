@@ -72,6 +72,17 @@ export const CAPTURE_DOUBLE = `
       ctx.fillStyle = 'hsl(' + ((window.__capture.frames * 7) % 360) + ',70%,50%)';
       ctx.fillRect(20, 220, 400 + Math.sin(elapsed) * 200, 60);
 
+      // High-entropy field, kept well clear of the barcode and the readout. A
+      // flat canvas compresses to almost nothing, which would make the
+      // endurance test claim to write megabytes while writing kilobytes.
+      if (window.__capture.noise) {
+        for (let i = 0; i < 400; i++) {
+          ctx.fillStyle = 'rgb(' + ((Math.random() * 256) | 0) + ','
+            + ((Math.random() * 256) | 0) + ',' + ((Math.random() * 256) | 0) + ')';
+          ctx.fillRect(Math.random() * (width - 40), 320 + Math.random() * (height - 360), 40, 40);
+        }
+      }
+
       window.__capture.frames++;
     };
 
