@@ -1,0 +1,425 @@
+/**
+ * App wiring: one continuous recording, markers dropped into it live, and a
+ * library for reviewing them afterwards.
+ */
+import {
+  SessionRecorder, SESSION_STATUS, listSessions, recoverInterruptedSessions,
+  storageEstimate, requestPersistentStorage, isQuotaError, formatBytes,
+} from './session-recorder.js';
+import { loadSettings, saveSettings, captureOptions, estimateBytesPerHour, PRESETS } from './settings.js';
+import { ReviewView } from './review.js';
+import { $, el, clear, formatDate, formatClock, formatDuration } from './dom.js';
+
+const KIND_LABEL = { entry: 'Entry', exit: 'Exit', note: 'Note' };
+
+let settings = loadSettings();
+let recorder = null;
+let elapsedTimer = null;
+let liveMarkers = [];
+
+const review = new ReviewView({
+  getSettings: () => settings,
+  setSettings: (patch) => commitSettings(patch),
+  onChanged: () => { renderLibrary(); renderStorage(); },
+  onClose: () => { renderLibrary(); renderStorage(); },
+});
+
+// ─────────────────────────── recording ───────────────────────────
+
+/**
+ * getDisplayMedia must be reached synchronously from the gesture, so this
+ * handler awaits nothing before calling start(). Anything that needs doing
+ * first (opening the DB, asking for persistent storage) happens at page load.
+ */
+function onRecordClick() {
+  if (recorder && recorder.state === 'recording') {
+    stopRecording();
+    return;
+  }
+  startRecording();
+}
+
+function startRecording() {
+  const support = SessionRecorder.support();
+  if (!support.ok) {
+    showAlert(support.message);
+    return;
+  }
+
+  recorder = new SessionRecorder(captureOptions(settings));
+  liveMarkers = [];
+
+  recorder.on('start', () => {
+    setRecordingUi(true);
+    renderLiveMarkers();
+    startElapsedTimer();
+  });
+
+  recorder.on('marker', (m) => {
+    liveMarkers = [...liveMarkers, m];
+    renderLiveMarkers();
+  });
+
+  recorder.on('chunk', () => { /* keeps the storage meter honest during long sessions */ });
+
+  recorder.on('source-ended', () => {
+    // The user hit Chrome's own "Stop sharing" bar. The session still finalizes.
+    showAlert('Screen sharing was stopped from the browser bar. The session was saved.', 'warn');
+  });
+
+  recorder.on('quota-exceeded', () => {
+    showAlert(
+      'Storage is full. Recording stopped to avoid recording into the void — everything captured '
+      + 'before this point was saved. Delete some sessions to free space.',
+    );
+  });
+
+  recorder.on('error', (err) => {
+    if (isQuotaError(err)) return; // already reported, loudly
+    console.error('[recorder]', err);
+    showAlert(`Recorder error: ${err?.message || err}`, 'warn');
+  });
+
+  recorder.on('stop', () => {
+    setRecordingUi(false);
+    stopElapsedTimer();
+    renderLibrary();
+    renderStorage();
+  });
+
+  // Not awaited: the gesture must reach getDisplayMedia synchronously.
+  recorder.start({ startedFrom: 'ui' }).catch((err) => {
+    recorder = null;
+    setRecordingUi(false);
+    stopElapsedTimer();
+    if (err?.name === 'NotAllowedError') {
+      showAlert('Screen capture was declined, so nothing is being recorded.', 'warn');
+    } else {
+      showAlert(`Could not start recording: ${err?.message || err}`);
+    }
+  });
+}
+
+async function stopRecording() {
+  try {
+    await recorder?.stop();
+  } catch (err) {
+    showAlert(`Error while finalizing: ${err?.message || err}`);
+  }
+}
+
+/**
+ * The marking entry point.
+ *
+ * Deliberately hung off window: a browser extension or a desktop wrapper can
+ * call this to mark while another application is focused, which the in-page key
+ * handler below fundamentally cannot do.
+ */
+function mark(data = {}) {
+  if (!recorder || recorder.state !== 'recording') return null;
+  return recorder.mark(data);
+}
+
+function onKeyDown(e) {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const target = e.target;
+  if (target instanceof HTMLElement
+      && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) {
+    return;
+  }
+  if (!recorder || recorder.state !== 'recording') return;
+
+  const key = e.key.toLowerCase();
+  const kind = Object.keys(settings.hotkeys).find((k) => settings.hotkeys[k] === key);
+  if (!kind) return;
+
+  e.preventDefault();
+  mark({ kind });
+}
+
+// ─────────────────────────── recording UI ───────────────────────────
+
+function setRecordingUi(isRecording) {
+  const btn = $('#btn-record');
+  btn.dataset.state = isRecording ? 'recording' : 'idle';
+  $('#btn-record-label').textContent = isRecording ? 'Stop recording' : 'Start recording';
+
+  const status = $('#record-status');
+  status.dataset.state = isRecording ? 'recording' : 'idle';
+  $('#status-text').textContent = isRecording ? 'RECORDING' : 'Not recording';
+  $('#elapsed').hidden = !isRecording;
+  if (!isRecording) $('#elapsed').textContent = '00:00';
+}
+
+function startElapsedTimer() {
+  stopElapsedTimer();
+  elapsedTimer = setInterval(() => {
+    $('#elapsed').textContent = formatDuration(recorder?.elapsedMs || 0);
+  }, 250);
+}
+
+function stopElapsedTimer() {
+  clearInterval(elapsedTimer);
+  elapsedTimer = null;
+}
+
+function renderLiveMarkers() {
+  $('#live-marker-count').textContent = String(liveMarkers.length);
+  $('#live-marker-empty').hidden = liveMarkers.length > 0;
+
+  const list = clear($('#live-marker-list'));
+  // Newest first: the mark just dropped is the one being looked at.
+  for (const m of [...liveMarkers].reverse()) {
+    list.append(el('li', { class: 'marker', dataset: { kind: m.kind } },
+      el('span', { class: 'marker-time' }, formatDuration(m.offsetMs)),
+      el('div', { class: 'marker-body' },
+        el('div', { class: 'marker-label' },
+          el('span', { class: 'marker-kind' }, KIND_LABEL[m.kind] || m.kind),
+          el('span', { class: 'muted' }, `at ${formatClock(Date.parse(m.wallClock))}`),
+        ),
+        el('div', { class: 'marker-note' }, 'Add symbol, direction and notes in review.'),
+      ),
+    ));
+  }
+}
+
+function renderHotkeys() {
+  const strip = clear($('#hotkeys-strip'));
+  for (const [kind, key] of Object.entries(settings.hotkeys)) {
+    strip.append(el('span', { class: 'hotkey', dataset: { kind } },
+      el('kbd', {}, key), KIND_LABEL[kind] || kind));
+  }
+}
+
+// ─────────────────────────── library ───────────────────────────
+
+async function renderLibrary() {
+  const sessions = await listSessions();
+  $('#session-count').textContent = String(sessions.length);
+  $('#session-empty').hidden = sessions.length > 0;
+
+  const list = clear($('#session-list'));
+  for (const s of sessions) list.append(sessionRow(s));
+}
+
+function sessionRow(s) {
+  const markers = (s.markers || []).length;
+  const badges = [];
+  if (s.status === SESSION_STATUS.INTERRUPTED) {
+    badges.push(el('span', { class: 'badge badge-interrupted', title: 'Recovered after a refresh or crash — playable up to the last stored timeslice' }, 'interrupted'));
+  }
+  if (s.status === SESSION_STATUS.RECORDING) {
+    badges.push(el('span', { class: 'badge badge-recording' }, 'recording'));
+  }
+  if (s.storageError?.kind === 'quota') {
+    badges.push(el('span', { class: 'badge badge-quota' }, 'storage full'));
+  }
+
+  return el('button', {
+    class: 'session', type: 'button', dataset: { sessionId: s.id },
+    onclick: () => review.open(s.id),
+  },
+    el('div', { class: 'session-when' },
+      el('div', { class: 'session-date' }, formatDate(s.startedAt)),
+      el('div', { class: 'session-time' }, formatClock(s.startedAt)),
+    ),
+    el('div', { class: 'session-stats' },
+      stat(formatDuration(s.durationMs || 0), 'length'),
+      stat(String(markers), markers === 1 ? 'marker' : 'markers'),
+      stat(formatBytes(s.bytes || 0), 'size'),
+    ),
+    el('div', { class: 'marker-actions' }, ...badges),
+  );
+}
+
+function stat(value, label) {
+  return el('div', { class: 'stat' },
+    el('span', { class: 'stat-value' }, value),
+    el('span', { class: 'stat-label' }, label),
+  );
+}
+
+// ─────────────────────────── storage meter ───────────────────────────
+
+async function renderStorage() {
+  const est = await storageEstimate();
+  const fill = $('#storage-fill');
+  const text = $('#storage-text');
+
+  if (!est) {
+    text.textContent = 'storage usage unavailable';
+    return;
+  }
+
+  fill.style.width = `${Math.min(100, est.pct)}%`;
+  fill.dataset.level = est.pct > 90 ? 'danger' : est.pct > 75 ? 'warn' : 'ok';
+  text.textContent = `${formatBytes(est.usage)} of ${formatBytes(est.quota)}`;
+
+  if (est.pct > 90) {
+    showAlert('Storage is over 90% full. Delete some sessions before recording again.', 'warn');
+  }
+}
+
+// ─────────────────────────── settings ───────────────────────────
+
+function renderSettings() {
+  $('#set-preroll').value = String(Math.round(settings.preRollMs / 1000));
+  $('#set-width').value = String(settings.width);
+  $('#set-height').value = String(settings.height);
+  $('#set-fps').value = String(settings.frameRate);
+  $('#set-bitrate').value = String(Math.round(settings.videoBitsPerSecond / 1000));
+  $('#set-key-entry').value = settings.hotkeys.entry;
+  $('#set-key-exit').value = settings.hotkeys.exit;
+  $('#set-key-note').value = settings.hotkeys.note;
+
+  const presets = clear($('#set-preset'));
+  presets.append(el('option', { value: '' }, 'Custom'));
+  PRESETS.forEach((p, i) => {
+    const matches = p.width === settings.width && p.height === settings.height
+      && p.frameRate === settings.frameRate && p.videoBitsPerSecond === settings.videoBitsPerSecond;
+    presets.append(el('option', { value: String(i), selected: matches }, p.label));
+  });
+
+  const perHour = estimateBytesPerHour(settings);
+  $('#size-estimate').textContent =
+    `About ${formatBytes(perHour)} per hour — roughly ${formatBytes(perHour * 2)} for a two-hour session.`;
+
+  renderHotkeys();
+}
+
+function commitSettings(patch) {
+  settings = saveSettings({ ...settings, ...patch });
+  renderSettings();
+}
+
+function wireSettings() {
+  $('#nav-settings').addEventListener('click', (e) => {
+    const panel = $('#settings-panel');
+    panel.hidden = !panel.hidden;
+    e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
+  });
+
+  $('#set-preroll').addEventListener('change', (e) => {
+    commitSettings({ preRollMs: Math.max(0, Number(e.target.value) || 0) * 1000 });
+  });
+
+  $('#set-preset').addEventListener('change', (e) => {
+    const preset = PRESETS[Number(e.target.value)];
+    if (!preset) return;
+    const { label, ...values } = preset;
+    commitSettings(values);
+  });
+
+  const numeric = [
+    ['#set-width', 'width', 1],
+    ['#set-height', 'height', 1],
+    ['#set-fps', 'frameRate', 1],
+    ['#set-bitrate', 'videoBitsPerSecond', 1000],
+  ];
+  for (const [sel, key, scale] of numeric) {
+    $(sel).addEventListener('change', (e) => {
+      const value = Math.max(1, Number(e.target.value) || 0) * scale;
+      commitSettings({ [key]: value });
+    });
+  }
+
+  for (const [sel, kind] of [['#set-key-entry', 'entry'], ['#set-key-exit', 'exit'], ['#set-key-note', 'note']]) {
+    $(sel).addEventListener('change', (e) => {
+      const key = (e.target.value || '').toLowerCase().slice(0, 1);
+      if (!key) { renderSettings(); return; }
+      commitSettings({ hotkeys: { ...settings.hotkeys, [kind]: key } });
+    });
+  }
+
+  $('#btn-persist').addEventListener('click', async () => {
+    const granted = await requestPersistentStorage();
+    $('#persist-state').textContent = granted
+      ? 'Granted — recordings will not be evicted.'
+      : 'Denied. The browser may evict recordings under storage pressure.';
+  });
+}
+
+// ─────────────────────────── banners ───────────────────────────
+
+let alertTimer = null;
+
+function showAlert(message, level = 'error') {
+  const banner = $('#alert-banner');
+  banner.hidden = false;
+  banner.className = `banner banner-${level === 'warn' ? 'warn' : 'error'}`;
+  banner.textContent = message;
+
+  clearTimeout(alertTimer);
+  alertTimer = setTimeout(() => { banner.hidden = true; }, 12_000);
+}
+
+function renderSupport() {
+  const support = SessionRecorder.support();
+  if (support.ok) return true;
+
+  const banner = $('#support-banner');
+  banner.hidden = false;
+  banner.append(
+    el('strong', {}, 'Recording is not available in this browser.'),
+    document.createTextNode(support.message),
+  );
+  $('#btn-record').disabled = true;
+  return false;
+}
+
+// ─────────────────────────── boot ───────────────────────────
+
+async function boot() {
+  wireSettings();
+  renderSettings();
+  $('#btn-record').addEventListener('click', onRecordClick);
+  window.addEventListener('keydown', onKeyDown);
+
+  window.addEventListener('beforeunload', (e) => {
+    if (recorder?.state === 'recording') {
+      // Leaving mid-session is recoverable, but costs the buffered timeslice.
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
+  renderSupport();
+
+  // Anything that would delay the record gesture happens here, not in the click.
+  const recovered = await recoverInterruptedSessions();
+  if (recovered.length) {
+    showAlert(
+      `${recovered.length} session${recovered.length === 1 ? ' was' : 's were'} interrupted by a refresh or crash. `
+      + 'Recovered and playable up to the last stored timeslice.',
+      'warn',
+    );
+  }
+
+  if (navigator.storage?.persisted) {
+    const persisted = await navigator.storage.persisted();
+    $('#persist-state').textContent = persisted
+      ? 'Granted — recordings will not be evicted.'
+      : 'Not granted yet.';
+  }
+
+  await renderLibrary();
+  await renderStorage();
+  setInterval(renderStorage, 15_000);
+}
+
+// The external marking seam, and enough state for a wrapper to drive the app.
+window.tradeJournal = {
+  mark,
+  start: startRecording,
+  stop: stopRecording,
+  get state() { return recorder?.state || 'idle'; },
+  get sessionId() { return recorder?.sessionId || null; },
+  get markers() { return [...liveMarkers]; },
+  review,
+  get settings() { return { ...settings }; },
+};
+
+boot().catch((err) => {
+  console.error(err);
+  showAlert(`Startup failed: ${err?.message || err}`);
+});
