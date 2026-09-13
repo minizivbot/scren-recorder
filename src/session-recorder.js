@@ -238,7 +238,9 @@ export class SessionRecorder {
           this._record.lastChunkAt = Date.now();
           // Heartbeat write. Cheap relative to the chunk itself, and it is what
           // makes an interrupted session recoverable with a real duration.
-          this._put('sessions', { ...this._record }).catch(() => {});
+          // Tracked, so stop() cannot write the final record and then have this
+          // land afterwards and revert the session to 'recording'.
+          this._track(this._put('sessions', { ...this._record }).catch(() => {}));
         }
         this._emit('chunk', { seq, size: e.data.size, atMs });
       } catch (err) {
@@ -250,8 +252,14 @@ export class SessionRecorder {
       }
     })();
 
-    this._pendingWrites.add(write);
-    write.finally(() => this._pendingWrites.delete(write));
+    this._track(write);
+  }
+
+  /** Registers a write so _drainWrites() waits for it. */
+  _track(promise) {
+    this._pendingWrites.add(promise);
+    promise.finally(() => this._pendingWrites.delete(promise));
+    return promise;
   }
 
   /**
@@ -303,12 +311,10 @@ export class SessionRecorder {
   _persistMarkers() {
     if (!this._record) return;
     this._record.markers = this.markers;
-    const write = this._put('sessions', { ...this._record }).catch((err) => {
+    this._track(this._put('sessions', { ...this._record }).catch((err) => {
       this._emit('error', err);
       console.error('[recorder] failed to persist markers', err);
-    });
-    this._pendingWrites.add(write);
-    write.finally(() => this._pendingWrites.delete(write));
+    }));
   }
 
   async stop(opts = {}) {
@@ -588,6 +594,24 @@ function sortMarkers(markers) {
 
 // ---- storage accounting -------------------------------------------------
 
+/**
+ * What the recordings themselves occupy, summed from the session rows.
+ *
+ * navigator.storage.estimate() is the browser's number and it lags badly: after
+ * deleting a session its usage figure does not drop for a long time (IndexedDB
+ * compacts later, and the estimate is padded). A meter built only on that would
+ * tell you a deletion did nothing. This number is exact and immediate; the
+ * browser's estimate is still shown alongside it, because that is the one that
+ * governs eviction and quota.
+ */
+export async function recordingsFootprint() {
+  const sessions = await listSessions();
+  return {
+    bytes: sessions.reduce((sum, s) => sum + (s.bytes || 0), 0),
+    sessions: sessions.length,
+  };
+}
+
 export async function storageEstimate() {
   if (!navigator.storage?.estimate) return null;
   const { usage, quota } = await navigator.storage.estimate();
@@ -661,9 +685,11 @@ export function openDb() {
   return dbPromise;
 }
 
-/** Test seam: drop the cached connection between test cases. */
+/** Test seam: close and drop the cached connection between test cases. */
 export function _resetDbForTests() {
+  const pending = dbPromise;
   dbPromise = null;
+  pending?.then((db) => db.close()).catch(() => {});
 }
 
 export function isQuotaError(err) {

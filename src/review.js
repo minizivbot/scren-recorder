@@ -103,7 +103,10 @@ export class ReviewView {
 
     overlay.hidden = true;
     $('#time-total').textContent = formatDuration(this.durationMs);
-    this._renderMarkers();
+    // Only the rail: it needs durationMs to place markers. Re-rendering the
+    // list here would destroy an editor opened while the video was loading,
+    // taking whatever had been typed into it with it.
+    this._renderTimelineRail();
     this._renderProgress();
   }
 
@@ -143,17 +146,33 @@ export class ReviewView {
     $('#review-preroll').value = String(Math.round(this.getSettings().preRollMs / 1000));
   }
 
+  _sortedMarkers() {
+    return [...(this.session?.markers || [])].sort((a, b) => a.offsetMs - b.offsetMs);
+  }
+
   _renderMarkers() {
-    const markers = [...(this.session?.markers || [])].sort((a, b) => a.offsetMs - b.offsetMs);
+    this._renderMarkerList();
+    this._renderTimelineRail();
+  }
+
+  _renderMarkerList() {
+    const markers = this._sortedMarkers();
     $('#review-marker-count').textContent = String(markers.length);
     $('#review-marker-empty').hidden = markers.length > 0;
 
+    // Never rebuild over a form someone is typing into — but do rebuild when a
+    // different marker's editor is being opened.
+    const openEditor = this.root.querySelector('[data-editor-for]');
+    if (this.editingId && openEditor?.dataset.editorFor === this.editingId) return;
+
     const list = clear($('#review-marker-list'));
     for (const m of markers) list.append(this._markerRow(m));
+  }
 
+  _renderTimelineRail() {
     const rail = clear($('#timeline-markers'));
     if (this.durationMs > 0) {
-      for (const m of markers) {
+      for (const m of this._sortedMarkers()) {
         const pct = Math.min(100, (m.offsetMs / this.durationMs) * 100);
         rail.append(el('button', {
           class: 'tl-marker',
@@ -239,7 +258,7 @@ export class ReviewView {
       ),
     );
 
-    return el('li', { class: 'marker', dataset: { kind: m.kind } },
+    return el('li', { class: 'marker', dataset: { kind: m.kind, editorFor: m.id } },
       el('span', { class: 'marker-time' }, formatDuration(m.offsetMs)),
       el('div', { class: 'marker-body' }, form),
     );

@@ -96,6 +96,14 @@ Markers added that way are flagged `addedDuringReview` and sorted into place.
 - Usage is shown in the header; deleting a session deletes its chunks, not just
   its row, and reports the bytes freed.
 
+The header meter shows **what the recordings occupy**, summed from the session
+rows, not `navigator.storage.estimate()`. Chrome does not lower its own usage
+figure for a long time after an IndexedDB delete — measured flat for 12 seconds
+after removing 255 KB, because compaction is deferred and the number is padded.
+A meter built on that would tell you a deletion had done nothing. The browser's
+estimate is still read (it governs eviction and the quota warning) and is shown
+in the meter's tooltip.
+
 ### Sizing
 
 Defaults: 1280×720, 10fps, 1.5 Mbps ≈ **1.3 GB for a two-hour session**.

@@ -4,7 +4,7 @@
  */
 import {
   SessionRecorder, SESSION_STATUS, listSessions, recoverInterruptedSessions,
-  storageEstimate, requestPersistentStorage, isQuotaError, formatBytes,
+  storageEstimate, recordingsFootprint, requestPersistentStorage, isQuotaError, formatBytes,
 } from './session-recorder.js';
 import { loadSettings, saveSettings, captureOptions, estimateBytesPerHour, PRESETS } from './settings.js';
 import { ReviewView } from './review.js';
@@ -241,23 +241,36 @@ function stat(value, label) {
 
 // ─────────────────────────── storage meter ───────────────────────────
 
+let wasStorageLow = false;
+
 async function renderStorage() {
-  const est = await storageEstimate();
+  const [est, own] = await Promise.all([storageEstimate(), recordingsFootprint()]);
   const fill = $('#storage-fill');
   const text = $('#storage-text');
 
+  // Our own total, which is exact and drops the moment a session is deleted.
+  const mine = `${formatBytes(own.bytes)} in ${own.sessions} session${own.sessions === 1 ? '' : 's'}`;
+
   if (!est) {
-    text.textContent = 'storage usage unavailable';
+    text.textContent = mine;
     return;
   }
 
+  // The bar tracks the browser's quota, since that is what causes eviction.
   fill.style.width = `${Math.min(100, est.pct)}%`;
   fill.dataset.level = est.pct > 90 ? 'danger' : est.pct > 75 ? 'warn' : 'ok';
-  text.textContent = `${formatBytes(est.usage)} of ${formatBytes(est.quota)}`;
+  text.textContent = mine;
+  $('#storage-meter').title =
+    `Recordings: ${mine}\nBrowser reports ${formatBytes(est.usage)} of ${formatBytes(est.quota)} used for this site.\n`
+    + 'The browser\'s figure lags after a delete; the recordings total is exact.';
 
-  if (est.pct > 90) {
+  // Only when it crosses, not on every poll — a banner every 15 seconds trains
+  // you to ignore banners.
+  const low = est.pct > 90;
+  if (low && !wasStorageLow) {
     showAlert('Storage is over 90% full. Delete some sessions before recording again.', 'warn');
   }
+  wasStorageLow = low;
 }
 
 // ─────────────────────────── settings ───────────────────────────
@@ -339,6 +352,34 @@ function wireSettings() {
   });
 }
 
+/**
+ * Asks for persistent storage up front rather than behind a button, so a long
+ * session is not recording into data the browser considers evictable.
+ *
+ * Chromium grants this silently from engagement heuristics. Firefox prompts, and
+ * a permission prompt on page load is obnoxious, so there it stays manual.
+ */
+async function ensurePersistentStorage() {
+  if (!navigator.storage?.persisted) return;
+
+  const state = $('#persist-state');
+  if (await navigator.storage.persisted()) {
+    state.textContent = 'Granted — recordings will not be evicted.';
+    return;
+  }
+
+  const isChromium = /Chrome|Chromium|Edg\//.test(navigator.userAgent);
+  if (!isChromium) {
+    state.textContent = 'Not granted. Request it before a long session.';
+    return;
+  }
+
+  const granted = await requestPersistentStorage().catch(() => false);
+  state.textContent = granted
+    ? 'Granted — recordings will not be evicted.'
+    : 'Not granted. The browser may evict recordings under storage pressure.';
+}
+
 // ─────────────────────────── banners ───────────────────────────
 
 let alertTimer = null;
@@ -395,12 +436,7 @@ async function boot() {
     );
   }
 
-  if (navigator.storage?.persisted) {
-    const persisted = await navigator.storage.persisted();
-    $('#persist-state').textContent = persisted
-      ? 'Granted — recordings will not be evicted.'
-      : 'Not granted yet.';
-  }
+  await ensurePersistentStorage();
 
   await renderLibrary();
   await renderStorage();
