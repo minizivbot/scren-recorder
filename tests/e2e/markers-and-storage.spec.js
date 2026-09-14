@@ -140,15 +140,25 @@ test('the UI states plainly that it computes no performance statistics', async (
   expect(body).not.toMatch(/profit factor\s*[:=]\s*\d/i);
 });
 
-test('the focus limitation is stated, not hidden', async ({ page }) => {
+test('the focus limitation is solved, and its one remaining edge is stated', async ({ page }) => {
   await page.goto('/');
   const notice = page.locator('.notice-focus');
-  await expect(notice).toContainText('Hotkeys only work while this tab is focused');
 
-  await notice.locator('summary').click();
-  await expect(notice).toContainText('browser extension');
-  await expect(notice).toContainText('desktop wrapper');
+  // Global marking now works, and the UI says whether it is actually live
+  // rather than leaving you to find out at review time.
+  await expect(page.locator('#bridge-state')).toHaveAttribute('data-connected', 'true');
+  await expect(notice).toContainText('while Tradovate has focus');
 
-  // The external marking entry point a wrapper would drive really is exposed.
+  // The setup is discoverable from the page, not buried in a README.
+  await notice.locator('summary').first().click();
+  await expect(notice).toContainText('AutoHotkey');
+  await expect(notice).toContainText('trade-journal-hotkeys.ahk');
+
+  // And the one thing a hotkey genuinely cannot do is stated, not glossed over.
+  await notice.locator('summary').nth(1).click();
+  await expect(notice).toContainText('Starting a recording still has to be a click');
+  await expect(notice).toContainText('getDisplayMedia');
+
+  // The external marking entry point is exposed for any other trigger.
   expect(await page.evaluate(() => typeof window.tradeJournal.mark)).toBe('function');
 });

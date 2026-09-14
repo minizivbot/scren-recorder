@@ -58,28 +58,76 @@ built.
 
 ---
 
-## The hotkey limitation, stated plainly
+## Marking while you trade
 
-**Marking only works while this tab is focused.** While you are working inside
-Tradovate this tab is not focused, so its `keydown` listener receives nothing.
-This is the one genuine weakness of the approach, and there is no browser API
-that fixes it — a page cannot listen for keys globally.
+Marking works while Tradovate has focus — **browser or desktop app** — through a
+local bridge. The page's own key handler cannot do this: a page only receives
+`keydown` while its tab is focused, and no browser API changes that. So the fix
+lives outside the browser.
 
-The in-page listener is implemented (`e` entry, `x` exit, `n` note, all
-rebindable). The UI states the limitation rather than implying it works globally.
+The recorder's own server is already running during a session, so anything on
+your machine that can make an HTTP request drops a marker:
 
-Making it global needs a different trigger, and both options drive the same entry
-point, `window.tradeJournal.mark({ kind })`, which is already exposed:
+```
+POST http://localhost:5173/bridge/mark
+Content-Type: application/json
 
-| Option | Covers | Does not cover |
-| --- | --- | --- |
-| Browser extension (`commands` permission, background service worker) | Any tab focused | Other applications, including the Tradovate desktop app |
-| Desktop wrapper (Electron / Tauri, OS-level global shortcut) | Everything, desktop app included | — |
+{"command":"mark","kind":"entry","direction":"long","symbol":"MNQ"}
+```
 
-The practical fallback, today: **scrub to the moment in review and mark there.**
-Markers added that way are flagged `addedDuringReview` and sorted into place.
+The page subscribes to an event stream and marks when a command arrives.
 
----
+### Setup (Windows, about two minutes)
+
+1. Install [AutoHotkey v2](https://www.autohotkey.com).
+2. Start the recorder: `node scripts/serve.mjs`
+3. Double-click `tools/trade-journal-hotkeys.ahk`. A green **H** appears in the tray.
+
+| Key | Does |
+| --- | --- |
+| `Ctrl+Alt+E` | Entry |
+| `Ctrl+Alt+X` | Exit |
+| `Ctrl+Alt+N` | Note |
+| `Ctrl+Alt+L` | Entry, long |
+| `Ctrl+Alt+S` | Entry, short |
+| `Ctrl+Alt+Q` | Stop the session |
+
+Edit the top of the `.ahk` file to rebind. AutoHotkey is not special here —
+a Stream Deck, macro keyboard or foot pedal works just as well, since they all
+just post to the same URL.
+
+### What a hotkey cannot do
+
+**Start a recording.** `getDisplayMedia` requires a real user gesture in the
+page before the browser will hand over the screen, so beginning a session is
+always a click in the tab. Stopping one remotely is fine, and is bound above.
+
+### Failing loudly
+
+A hotkey that silently does nothing is worse than no hotkey, because you find
+out at review time that the marker was never recorded. So:
+
+- The response reports how many tabs received the command. `"delivered":0` means
+  the recorder tab is not open, and the script says so rather than flashing a
+  confirmation.
+- If a hotkey fires while nothing is recording, the page raises a banner instead
+  of discarding it quietly.
+- The page shows **Global hotkeys: ready** / **not connected**, so the state is
+  visible before you need it rather than after.
+
+### Keeping it to your machine
+
+The server binds `127.0.0.1` only, so nothing off the machine can reach it.
+Commands must be `POST` with `Content-Type: application/json`, which a web page
+cannot send cross-origin without a preflight — and no CORS headers are returned
+anywhere, so the preflight fails. Any request carrying an `Origin` header is
+rejected outright. That closes the case where a site you happen to be visiting
+quietly injects markers into your journal.
+
+### Still a fallback
+
+Any marker you miss can be added afterwards by scrubbing to the moment in review
+and marking there.
 
 ## Storage
 
@@ -150,6 +198,9 @@ flow is "seek to a marker", this is handled in two places
 ```
 index.html              app shell
 src/session-recorder.js capture + storage core (the module this was built on)
+src/bridge-client.js    subscribes to the local bridge for global hotkeys
+scripts/bridge.mjs      the mark bridge: hotkey in, event stream out
+tools/*.ahk             global hotkeys for Windows
 src/player.js           duration resolution and seeking for header-less webm
 src/review.js           player, marker rail, marker editing, scrub-and-mark
 src/app.js              recording UI, library, settings, the marking entry point
@@ -160,7 +211,7 @@ tests/e2e/              real recordings in real Chromium, verified by playback
 
 ## Tests
 
-`npm test` — 41 unit tests over the four areas that can silently ruin a session:
+`npm test` — 57 unit tests over the areas that can silently ruin a session:
 chunk ordering on reassembly, marker offset accuracy, recovery of an interrupted
 session, and quota-exceeded handling.
 

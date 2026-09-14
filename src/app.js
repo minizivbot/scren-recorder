@@ -8,6 +8,7 @@ import {
 } from './session-recorder.js';
 import { loadSettings, saveSettings, captureOptions, estimateBytesPerHour, PRESETS } from './settings.js';
 import { ReviewView } from './review.js';
+import { BridgeClient } from './bridge-client.js';
 import { $, el, clear, formatDate, formatClock, formatDuration } from './dom.js';
 
 const KIND_LABEL = { entry: 'Entry', exit: 'Exit', note: 'Note' };
@@ -111,13 +112,57 @@ async function stopRecording() {
 /**
  * The marking entry point.
  *
- * Deliberately hung off window: a browser extension or a desktop wrapper can
- * call this to mark while another application is focused, which the in-page key
- * handler below fundamentally cannot do.
+ * Deliberately hung off window, and also driven by the local bridge: both exist
+ * so that marking can happen while another application is focused, which the
+ * in-page key handler below fundamentally cannot do.
  */
 function mark(data = {}) {
   if (!recorder || recorder.state !== 'recording') return null;
   return recorder.mark(data);
+}
+
+// ─────────────────────────── global hotkeys ───────────────────────────
+
+const bridge = new BridgeClient({
+  onCommand: (cmd) => {
+    if (cmd.command === 'stop') {
+      // Stopping remotely is fine. Starting is not: getDisplayMedia needs a
+      // real gesture in the page, so no hotkey can begin a session.
+      stopRecording();
+      return;
+    }
+
+    if (!recorder || recorder.state !== 'recording') {
+      showAlert('A global hotkey fired, but nothing is recording — the marker was not saved.', 'warn');
+      return;
+    }
+
+    mark({
+      kind: cmd.kind,
+      symbol: cmd.symbol || '',
+      direction: cmd.direction || '',
+      account: cmd.account || '',
+      note: cmd.note || '',
+      source: 'hotkey',
+    });
+  },
+
+  onStatus: ({ connected, message }) => renderBridgeStatus(connected, message),
+});
+
+function renderBridgeStatus(connected, message) {
+  const state = $('#bridge-state');
+  state.dataset.connected = String(connected);
+  $('#bridge-label').textContent = connected
+    ? 'Global hotkeys: ready'
+    : 'Global hotkeys: not connected';
+
+  if (message) $('#bridge-help').textContent = message;
+  else if (connected) {
+    $('#bridge-help').textContent =
+      'Marking works while Tradovate has focus — browser or desktop app — as long as this tab stays '
+      + 'open and your hotkey tool is running.';
+  }
 }
 
 function onKeyDown(e) {
@@ -170,14 +215,21 @@ function renderLiveMarkers() {
   const list = clear($('#live-marker-list'));
   // Newest first: the mark just dropped is the one being looked at.
   for (const m of [...liveMarkers].reverse()) {
+    // A hotkey can carry a symbol and direction, so show what actually arrived
+    // rather than always telling you to fill it in later.
+    const details = [m.symbol, m.direction, m.account && `(${m.account})`].filter(Boolean);
+
     list.append(el('li', { class: 'marker', dataset: { kind: m.kind } },
       el('span', { class: 'marker-time' }, formatDuration(m.offsetMs)),
       el('div', { class: 'marker-body' },
         el('div', { class: 'marker-label' },
           el('span', { class: 'marker-kind' }, KIND_LABEL[m.kind] || m.kind),
+          details.length ? el('span', { class: 'marker-sym' }, details.join(' ')) : null,
           el('span', { class: 'muted' }, `at ${formatClock(Date.parse(m.wallClock))}`),
+          m.source === 'hotkey' ? el('span', { class: 'badge' }, 'hotkey') : null,
         ),
-        el('div', { class: 'marker-note' }, 'Add symbol, direction and notes in review.'),
+        el('div', { class: 'marker-note' },
+          m.note || (details.length ? 'Add notes in review.' : 'Add symbol, direction and notes in review.')),
       ),
     ));
   }
@@ -425,6 +477,7 @@ async function boot() {
   });
 
   renderSupport();
+  bridge.connect();
 
   // Anything that would delay the record gesture happens here, not in the click.
   const recovered = await recoverInterruptedSessions();
@@ -446,6 +499,7 @@ async function boot() {
 // The external marking seam, and enough state for a wrapper to drive the app.
 window.tradeJournal = {
   mark,
+  bridge,
   start: startRecording,
   stop: stopRecording,
   get state() { return recorder?.state || 'idle'; },

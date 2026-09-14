@@ -116,6 +116,23 @@ main { max-width: 1180px; margin: 0 auto; padding: 20px; }
 }
 .notice p { margin: 6px 0 0; color: var(--muted); }
 .notice-focus { border-left: 3px solid var(--exit); }
+.notice-focus[data-any] { border-left-color: var(--entry); }
+
+.bridge-state { display: flex; align-items: center; gap: 9px; }
+.bridge-light {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--muted); flex-shrink: 0;
+}
+.bridge-state[data-connected="true"] .bridge-light { background: var(--entry); }
+.bridge-state[data-connected="false"] .bridge-light { background: var(--exit); }
+
+.setup-steps { margin: 10px 0 0; padding-left: 22px; color: var(--muted); }
+.setup-steps li { margin-bottom: 8px; }
+.setup-steps kbd, .notice kbd {
+  background: #0b0e13; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 5px; padding: 1px 6px; font: 600 11px ui-monospace, monospace;
+}
+.notice a { color: var(--accent); }
 .notice-scope { border-left: 3px solid var(--accent); margin: 0 0 18px; }
 .notice details { margin-top: 10px; }
 .notice summary { cursor: pointer; color: var(--text); }
