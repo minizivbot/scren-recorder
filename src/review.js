@@ -5,9 +5,12 @@
 import {
   getSession, getSessionBlob, deleteSession, seekTargetMs,
   addMarkerToSession, updateSessionMarker, removeSessionMarker,
+  addTradeToSession, updateSessionTrade, removeSessionTrade,
+  tradeAtOffset, tradeLabel,
   SESSION_STATUS, formatBytes,
 } from './session-recorder.js';
 import { loadSessionIntoVideo, seekTo } from './player.js';
+import { tradeRow } from './trade-ui.js';
 import { $, el, clear, formatDate, formatClock, formatDuration, confirmDestructive } from './dom.js';
 
 const KIND_LABEL = { entry: 'Entry', exit: 'Exit', note: 'Note' };
@@ -23,6 +26,7 @@ export class ReviewView {
     this.objectUrl = null;
     this.durationMs = 0;
     this.editingId = null;
+    this.editingTradeId = null;
 
     this.video = $('#player');
     this.root = $('#view-review');
@@ -37,6 +41,7 @@ export class ReviewView {
     $('#btn-fwd10').addEventListener('click', () => this._nudge(10));
     $('#btn-fwd60').addEventListener('click', () => this._nudge(60));
     $('#btn-mark-here').addEventListener('click', () => this._markAtPlayhead());
+    $('#btn-add-trade').addEventListener('click', () => this._addTrade());
     $('#btn-delete-session').addEventListener('click', () => this._deleteSession());
 
     $('#playback-rate').addEventListener('change', (e) => {
@@ -103,10 +108,11 @@ export class ReviewView {
 
     overlay.hidden = true;
     $('#time-total').textContent = formatDuration(this.durationMs);
-    // Only the rail: it needs durationMs to place markers. Re-rendering the
-    // list here would destroy an editor opened while the video was loading,
+    // Only the rails: they need durationMs to place anything. Re-rendering the
+    // lists here would destroy an editor opened while the video was loading,
     // taking whatever had been typed into it with it.
     this._renderTimelineRail();
+    this._renderTradeBands();
     this._renderProgress();
   }
 
@@ -121,6 +127,7 @@ export class ReviewView {
     }
     this.session = null;
     this.editingId = null;
+    this.editingTradeId = null;
     this.root.hidden = true;
     $('#view-record').hidden = false;
     this.onClose?.();
@@ -132,10 +139,13 @@ export class ReviewView {
     const s = this.session;
     $('#review-title').textContent = `${formatDate(s.startedAt)} · ${formatClock(s.startedAt)}`;
 
+    const trades = (s.trades || []).length;
+    const markers = (s.markers || []).length;
     const bits = [
       formatDuration(s.durationMs || 0),
       formatBytes(s.bytes || 0),
-      `${(s.markers || []).length} marker${(s.markers || []).length === 1 ? '' : 's'}`,
+      `${trades} trade${trades === 1 ? '' : 's'}`,
+      `${markers} mark${markers === 1 ? '' : 's'}`,
     ];
     if (s.status === SESSION_STATUS.INTERRUPTED) bits.push('interrupted — recovered');
     if (s.storageError?.kind === 'quota') bits.push('stopped: storage full');
@@ -150,10 +160,159 @@ export class ReviewView {
     return [...(this.session?.markers || [])].sort((a, b) => a.offsetMs - b.offsetMs);
   }
 
+  _sortedTrades() {
+    return [...(this.session?.trades || [])].sort((a, b) => a.openedAtMs - b.openedAtMs);
+  }
+
+  _trade(id) {
+    return this.session?.trades?.find((t) => t.id === id) || null;
+  }
+
   _renderMarkers() {
+    this._renderTradeList();
     this._renderMarkerList();
     this._renderTimelineRail();
+    this._renderTradeBands();
   }
+
+  // ---- trades ------------------------------------------------------------
+
+  _renderTradeList() {
+    const trades = this._sortedTrades();
+    $('#review-trade-count').textContent = String(trades.length);
+    $('#review-trade-empty').hidden = trades.length > 0;
+
+    // Same rule as the marker list: never rebuild over a form being typed into.
+    const openEditor = this.root.querySelector('[data-trade-editor-for]');
+    if (this.editingTradeId && openEditor?.dataset.tradeEditorFor === this.editingTradeId) return;
+
+    const list = clear($('#review-trade-list'));
+    for (const trade of trades) list.append(this._tradeCard(trade));
+  }
+
+  _tradeCard(trade) {
+    if (this.editingTradeId === trade.id) return this._tradeEditor(trade);
+
+    const markerCount = (this.session.markers || []).filter((m) => m.tradeId === trade.id).length;
+    return tradeRow(trade, {
+      markerCount,
+      isOpen: trade.closedAtMs == null,
+      onClick: () => this.seekToTrade(trade),
+      actions: [
+        el('button', {
+          class: 'btn btn-ghost', type: 'button',
+          onclick: (e) => {
+            e.stopPropagation();
+            this.editingTradeId = trade.id;
+            this._renderTradeList();
+          },
+        }, 'Edit'),
+        el('button', {
+          class: 'btn btn-ghost btn-danger', type: 'button',
+          onclick: (e) => { e.stopPropagation(); this._removeTrade(trade); },
+        }, 'Delete'),
+      ],
+    });
+  }
+
+  /**
+   * The one place the instrument and the side are typed in review — once for
+   * the whole trade, however many marks are filed under it.
+   */
+  _tradeEditor(trade) {
+    const form = el('form', {
+      class: 'edit-form trade-edit',
+      dataset: { tradeEditorFor: trade.id },
+      onsubmit: async (e) => {
+        e.preventDefault();
+        const data = new FormData(form);
+        await updateSessionTrade(this.session.id, trade.id, {
+          symbol: data.get('symbol'),
+          direction: data.get('direction'),
+          account: data.get('account'),
+          note: data.get('note'),
+        });
+        this.editingTradeId = null;
+        await this._reload();
+      },
+    },
+      el('label', {}, 'Pair',
+        el('input', { name: 'symbol', value: trade.symbol || '', placeholder: 'MNQ', spellcheck: false })),
+      el('label', {}, 'Side', select('direction', trade.direction, [['', '—'], ['long', 'Long'], ['short', 'Short']])),
+      el('label', {}, 'Account', select('account', trade.account, [['', '—'], ['paper', 'Paper'], ['live', 'Live']])),
+      el('label', { class: 'full' }, 'Trade note',
+        el('textarea', { name: 'note', value: trade.note || '', placeholder: 'What was the setup? Why this trade?' })),
+      el('p', { class: 'edit-seam' },
+        'A label for finding footage — not an accounting record. No P&L is stored or inferred here.'),
+      el('div', { class: 'edit-actions' },
+        el('button', {
+          class: 'btn btn-ghost', type: 'button',
+          onclick: () => { this.editingTradeId = null; this._renderTradeList(); },
+        }, 'Cancel'),
+        el('button', { class: 'btn btn-primary', type: 'submit' }, 'Save'),
+      ),
+    );
+    return form;
+  }
+
+  _renderTradeBands() {
+    const rail = clear($('#timeline-trades'));
+    if (this.durationMs <= 0) return;
+
+    for (const trade of this._sortedTrades()) {
+      const from = Math.min(100, (trade.openedAtMs / this.durationMs) * 100);
+      const to = Math.min(100, ((trade.closedAtMs ?? this.durationMs) / this.durationMs) * 100);
+      rail.append(el('button', {
+        class: 'tl-trade',
+        type: 'button',
+        style: `left:${from}%; width:${Math.max(to - from, 0.4)}%`,
+        title: `${tradeLabel(trade) || 'Unnamed trade'} · ${formatDuration(trade.openedAtMs)}`,
+        dataset: { direction: trade.direction || '', tradeId: trade.id },
+        onclick: () => this.seekToTrade(trade),
+      }));
+    }
+  }
+
+  async seekToTrade(trade) {
+    // A trade opens where its story starts, so pre-roll applies here too.
+    const target = seekTargetMs({ offsetMs: trade.openedAtMs }, this.getSettings().preRollMs);
+    await this._seekSeconds(target / 1000);
+
+    for (const node of this.root.querySelectorAll('.trade')) {
+      node.classList.toggle('is-active', node.dataset.tradeId === trade.id);
+    }
+    return target;
+  }
+
+  async _addTrade() {
+    if (!this.session) return null;
+    const trade = await addTradeToSession(this.session.id, {
+      openedAtMs: Math.round(this.video.currentTime * 1000),
+    });
+    this.editingTradeId = trade.id; // straight into the editor: it needs a pair
+    await this._reload();
+    return trade;
+  }
+
+  async _removeTrade(trade) {
+    const ok = confirmDestructive(
+      `Delete the trade ${tradeLabel(trade) || 'with no pair set'}? Its marks are kept and unfiled.`,
+    );
+    if (!ok) return;
+    await removeSessionTrade(this.session.id, trade.id);
+    this.editingTradeId = null;
+    await this._reload();
+  }
+
+  /** Re-reads the session and repaints everything that depends on it. */
+  async _reload() {
+    this.session = await getSession(this.session.id);
+    this._renderHeader();
+    this._renderMarkers();
+    this.onChanged?.();
+  }
+
+  // ---- markers -----------------------------------------------------------
 
   _renderMarkerList() {
     const markers = this._sortedMarkers();
@@ -190,10 +349,13 @@ export class ReviewView {
   _markerRow(m) {
     if (this.editingId === m.id) return this._markerEditor(m);
 
-    const label = [];
-    if (m.symbol) label.push(el('span', { class: 'marker-sym' }, m.symbol));
-    if (m.direction) label.push(el('span', { class: 'muted' }, m.direction));
-    if (m.account) label.push(el('span', { class: 'muted' }, `(${m.account})`));
+    // The pair is shown here, but it is the trade's — this row never owns it.
+    const trade = this._trade(m.tradeId);
+    const label = [trade
+      ? el('span', { class: 'marker-trade' },
+        el('strong', {}, trade.symbol || 'No pair set'),
+        trade.direction ? ` ${trade.direction}` : '')
+      : el('span', { class: 'marker-trade' }, 'unfiled')];
 
     return el('li', {
       class: 'marker marker-review',
@@ -221,35 +383,41 @@ export class ReviewView {
     );
   }
 
+  /**
+   * A marker only answers for its own moment: what kind it was, which trade it
+   * belongs to, and what you want to say about it. The instrument and the side
+   * are edited on the trade, once, however many marks point at it.
+   */
   _markerEditor(m) {
+    const tradeOptions = [
+      ['', 'Unfiled'],
+      ...this._sortedTrades().map((t) => [
+        t.id,
+        `${formatDuration(t.openedAtMs)} · ${tradeLabel(t) || 'no pair set'}`,
+      ]),
+    ];
+
     const form = el('form', {
-      class: 'marker-edit',
+      class: 'edit-form',
       onsubmit: async (e) => {
         e.preventDefault();
         const data = new FormData(form);
         await updateSessionMarker(this.session.id, m.id, {
           kind: data.get('kind'),
-          symbol: data.get('symbol').trim(),
-          direction: data.get('direction'),
-          account: data.get('account'),
+          tradeId: data.get('tradeId') || null,
           note: data.get('note').trim(),
         });
         this.editingId = null;
-        this.session = await getSession(this.session.id);
-        this._renderHeader();
-        this._renderMarkers();
-        this.onChanged?.();
+        await this._reload();
       },
     },
       el('label', {}, 'Kind', select('kind', m.kind, [['entry', 'Entry'], ['exit', 'Exit'], ['note', 'Note']])),
-      el('label', {}, 'Symbol', el('input', { name: 'symbol', value: m.symbol || '', placeholder: 'MNQ' })),
-      el('label', {}, 'Direction', select('direction', m.direction, [['', '—'], ['long', 'Long'], ['short', 'Short']])),
-      el('label', {}, 'Account', select('account', m.account, [['', '—'], ['paper', 'Paper'], ['live', 'Live']])),
+      el('label', {}, 'Trade', select('tradeId', m.tradeId, tradeOptions)),
       el('label', { class: 'full' }, 'Note',
-        el('textarea', { name: 'note', value: m.note || '', placeholder: 'What was the setup? What did you see?' })),
+        el('textarea', { name: 'note', value: m.note || '', placeholder: 'What did you see at this moment?' })),
       el('p', { class: 'edit-seam' },
-        'These are labels for finding footage — not an accounting record. No P&L is stored or inferred here.'),
-      el('div', { class: 'marker-edit-actions' },
+        'The pair and the side live on the trade, not here — edit them once on the ticket above.'),
+      el('div', { class: 'edit-actions' },
         el('button', {
           class: 'btn btn-ghost', type: 'button',
           onclick: () => { this.editingId = null; this._renderMarkers(); },
@@ -317,23 +485,24 @@ export class ReviewView {
   async _markAtPlayhead() {
     if (!this.session) return;
     const offsetMs = Math.round(this.video.currentTime * 1000);
-    const marker = await addMarkerToSession(this.session.id, { offsetMs, kind: 'note' });
+    // If the playhead is inside a position, that is what the mark is about —
+    // asking would be asking a question the timeline already answers.
+    const trade = tradeAtOffset(this.session, offsetMs);
+    const marker = await addMarkerToSession(this.session.id, {
+      offsetMs,
+      kind: 'note',
+      tradeId: trade?.id || null,
+    });
 
-    this.session = await getSession(this.session.id);
     this.editingId = marker.id; // open straight into the editor
-    this._renderHeader();
-    this._renderMarkers();
-    this.onChanged?.();
+    await this._reload();
     return marker;
   }
 
   async _removeMarker(m) {
     if (!confirmDestructive(`Delete the marker at ${formatDuration(m.offsetMs)}?`)) return;
     await removeSessionMarker(this.session.id, m.id);
-    this.session = await getSession(this.session.id);
-    this._renderHeader();
-    this._renderMarkers();
-    this.onChanged?.();
+    await this._reload();
   }
 
   async _deleteSession() {

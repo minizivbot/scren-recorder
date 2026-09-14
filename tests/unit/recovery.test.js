@@ -28,7 +28,8 @@ async function recordThenVanish({ chunks = 5, timesliceMs = 2000, setClock }) {
     await flush(3);
   }
   setClock(T0 + 3000 + chunks * timesliceMs);
-  rec.mark({ kind: 'entry', symbol: 'MNQ' });
+  rec.openNewTrade({ symbol: 'MNQ', direction: 'long' });
+  rec.mark({ kind: 'entry' });
   await flush(5);
 
   // No stop(). The recorder instance simply ceases to exist.
@@ -94,15 +95,21 @@ describe('recovery of an interrupted session', () => {
     expect(lostMs).toBe(1_900);
   });
 
-  it('preserves markers recorded before the interruption', async () => {
+  it('preserves the markers and the trade recorded before the interruption', async () => {
     const { sessionId } = await recordThenVanish({ chunks: 3, setClock });
     clock = T0 + 60_000;
     await recoverInterruptedSessions({ now: clock });
 
     const session = await getSession(sessionId);
     expect(session.markers).toHaveLength(1);
-    expect(session.markers[0].symbol).toBe('MNQ');
     expect(session.meta).toEqual({ note: 'morning session' });
+
+    // What was being traded survives on the trade, and the marker still points
+    // at it — an interrupted session is still a readable journal entry.
+    expect(session.trades).toHaveLength(1);
+    expect(session.trades[0].symbol).toBe('MNQ');
+    expect(session.trades[0].direction).toBe('long');
+    expect(session.markers[0].tradeId).toBe(session.trades[0].id);
   });
 
   it('leaves a session alone while another tab is still writing to it', async () => {

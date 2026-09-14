@@ -28,7 +28,26 @@ export const DEFAULTS = {
     exit: 'x',
     note: 'n',
   },
+
+  // The ticket the next trade opens with. Kept because a session is usually
+  // spent on one or two instruments, so the answer to "which pair?" is nearly
+  // always the same one you said last time.
+  ticket: {
+    symbol: '',
+    direction: '',
+    account: '',
+  },
+
+  // Instruments you have actually traded here, offered as suggestions.
+  instruments: [],
 };
+
+/** Most recent first, de-duplicated, and bounded — it is a suggestion list. */
+export function rememberInstrument(settings, symbol) {
+  const clean = String(symbol || '').trim().toUpperCase();
+  if (!clean) return settings.instruments || [];
+  return [clean, ...(settings.instruments || []).filter((s) => s !== clean)].slice(0, 12);
+}
 
 export const PRESETS = [
   { label: '720p · 10fps · 1.5 Mbps (default)', width: 1280, height: 720, frameRate: 10, videoBitsPerSecond: 1_500_000 },
@@ -44,9 +63,16 @@ export function loadSettings() {
       ...DEFAULTS,
       ...stored,
       hotkeys: { ...DEFAULTS.hotkeys, ...(stored.hotkeys || {}) },
+      ticket: { ...DEFAULTS.ticket, ...(stored.ticket || {}) },
+      instruments: Array.isArray(stored.instruments) ? stored.instruments : [],
     };
   } catch {
-    return { ...DEFAULTS, hotkeys: { ...DEFAULTS.hotkeys } };
+    return {
+      ...DEFAULTS,
+      hotkeys: { ...DEFAULTS.hotkeys },
+      ticket: { ...DEFAULTS.ticket },
+      instruments: [],
+    };
   }
 }
 

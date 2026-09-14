@@ -4,18 +4,29 @@
  */
 import {
   SessionRecorder, SESSION_STATUS, listSessions, recoverInterruptedSessions,
-  storageEstimate, recordingsFootprint, requestPersistentStorage, isQuotaError, formatBytes,
+  storageEstimate, recordingsFootprint, requestPersistentStorage, isQuotaError,
+  normalizeTradePatch, formatBytes,
 } from './session-recorder.js';
-import { loadSettings, saveSettings, captureOptions, estimateBytesPerHour, PRESETS } from './settings.js';
+import {
+  loadSettings, saveSettings, captureOptions, estimateBytesPerHour,
+  rememberInstrument, PRESETS,
+} from './settings.js';
 import { ReviewView } from './review.js';
+import { tradeRow, sideBadge } from './trade-ui.js';
 import { $, el, clear, formatDate, formatClock, formatDuration } from './dom.js';
 
 const KIND_LABEL = { entry: 'Entry', exit: 'Exit', note: 'Note' };
+const KIND_HINT = {
+  entry: 'entry — opens a trade if none is open',
+  exit: 'exit — closes the open trade',
+  note: 'note',
+};
 
 let settings = loadSettings();
 let recorder = null;
 let elapsedTimer = null;
 let liveMarkers = [];
+let liveTrades = [];
 
 const review = new ReviewView({
   getSettings: () => settings,
@@ -48,17 +59,29 @@ function startRecording() {
 
   recorder = new SessionRecorder(captureOptions(settings));
   liveMarkers = [];
+  liveTrades = [];
 
   recorder.on('start', () => {
     setRecordingUi(true);
     renderLiveMarkers();
+    renderLiveTrades();
+    renderTicket();
     startElapsedTimer();
   });
 
   recorder.on('marker', (m) => {
     liveMarkers = [...liveMarkers, m];
     renderLiveMarkers();
+    renderLiveTrades(); // the mark counts on its trade's ticket
   });
+
+  for (const event of ['trade-opened', 'trade-updated', 'trade-closed']) {
+    recorder.on(event, () => {
+      liveTrades = [...recorder.trades];
+      renderLiveTrades();
+      renderTicket();
+    });
+  }
 
   recorder.on('chunk', () => { /* keeps the storage meter honest during long sessions */ });
 
@@ -83,6 +106,7 @@ function startRecording() {
   recorder.on('stop', () => {
     setRecordingUi(false);
     stopElapsedTimer();
+    renderTicket();
     renderLibrary();
     renderStorage();
   });
@@ -120,6 +144,48 @@ function mark(data = {}) {
   return recorder.mark(data);
 }
 
+/**
+ * Opens a trade from whatever the ticket currently says.
+ *
+ * The ticket may still be blank at this point, and that is the correct
+ * behaviour: pressing entry the moment you click buy must never wait on
+ * typing. The pair and the side can be filled in while the trade runs, or in
+ * review — either way, once.
+ */
+function openTrade(data = {}) {
+  if (!recorder || recorder.state !== 'recording') return null;
+  const trade = recorder.openNewTrade({ ...settings.ticket, ...data });
+  if (trade.symbol) commitSettings({ instruments: rememberInstrument(settings, trade.symbol) });
+  return trade;
+}
+
+function closeTrade() {
+  if (!recorder || recorder.state !== 'recording') return null;
+  const trade = recorder.closeTrade();
+  if (!trade) return null;
+
+  // The next ticket starts where this one finished: a session is usually spent
+  // on one or two instruments, so the answer is nearly always the same.
+  const { symbol, direction, account } = trade;
+  commitSettings({
+    ticket: { symbol, direction, account },
+    instruments: rememberInstrument(settings, symbol),
+  });
+  return trade;
+}
+
+/**
+ * The hotkeys speak the language of a position, not of a database row:
+ * entry opens one if none is running, exit closes it, and a note simply lands
+ * wherever you already are. Nothing here ever asks for the instrument.
+ */
+function onMarkKey(kind) {
+  if (kind === 'entry' && !recorder.openTradeId) openTrade();
+  const marker = mark({ kind });
+  if (kind === 'exit') closeTrade();
+  return marker;
+}
+
 function onKeyDown(e) {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const target = e.target;
@@ -134,7 +200,7 @@ function onKeyDown(e) {
   if (!kind) return;
 
   e.preventDefault();
-  mark({ kind });
+  onMarkKey(kind);
 }
 
 // ─────────────────────────── recording UI ───────────────────────────
@@ -147,14 +213,21 @@ function setRecordingUi(isRecording) {
   const status = $('#record-status');
   status.dataset.state = isRecording ? 'recording' : 'idle';
   $('#status-text').textContent = isRecording ? 'RECORDING' : 'Not recording';
-  $('#elapsed').hidden = !isRecording;
-  if (!isRecording) $('#elapsed').textContent = '00:00';
+  $('#desk').dataset.state = isRecording ? 'recording' : 'idle';
+  if (!isRecording) {
+    $('#elapsed').textContent = '00:00';
+    $('#ticket-running-time').textContent = '00:00';
+  }
 }
 
 function startElapsedTimer() {
   stopElapsedTimer();
   elapsedTimer = setInterval(() => {
-    $('#elapsed').textContent = formatDuration(recorder?.elapsedMs || 0);
+    const elapsedMs = recorder?.elapsedMs || 0;
+    $('#elapsed').textContent = formatDuration(elapsedMs);
+
+    const open = recorder?.openTrade;
+    if (open) $('#ticket-running-time').textContent = formatDuration(elapsedMs - open.openedAtMs);
   }, 250);
 }
 
@@ -170,16 +243,35 @@ function renderLiveMarkers() {
   const list = clear($('#live-marker-list'));
   // Newest first: the mark just dropped is the one being looked at.
   for (const m of [...liveMarkers].reverse()) {
+    const trade = liveTrades.find((t) => t.id === m.tradeId);
     list.append(el('li', { class: 'marker', dataset: { kind: m.kind } },
       el('span', { class: 'marker-time' }, formatDuration(m.offsetMs)),
       el('div', { class: 'marker-body' },
         el('div', { class: 'marker-label' },
           el('span', { class: 'marker-kind' }, KIND_LABEL[m.kind] || m.kind),
-          el('span', { class: 'muted' }, `at ${formatClock(Date.parse(m.wallClock))}`),
+          // The pair is shown, never asked for: it was stated on the ticket.
+          trade
+            ? el('span', { class: 'marker-trade' },
+              el('strong', {}, trade.symbol || 'No pair set'),
+              trade.direction ? ` ${trade.direction}` : '')
+            : el('span', { class: 'marker-trade' }, 'no trade open'),
+          el('span', { class: 'muted' }, formatClock(Date.parse(m.wallClock))),
         ),
-        el('div', { class: 'marker-note' }, 'Add symbol, direction and notes in review.'),
       ),
     ));
+  }
+}
+
+function renderLiveTrades() {
+  $('#live-trade-count').textContent = String(liveTrades.length);
+  $('#live-trade-empty').hidden = liveTrades.length > 0;
+
+  const list = clear($('#live-trade-list'));
+  for (const trade of [...liveTrades].reverse()) {
+    list.append(tradeRow(trade, {
+      markerCount: liveMarkers.filter((m) => m.tradeId === trade.id).length,
+      isOpen: recorder?.openTradeId === trade.id,
+    }));
   }
 }
 
@@ -187,8 +279,98 @@ function renderHotkeys() {
   const strip = clear($('#hotkeys-strip'));
   for (const [kind, key] of Object.entries(settings.hotkeys)) {
     strip.append(el('span', { class: 'hotkey', dataset: { kind } },
-      el('kbd', {}, key), KIND_LABEL[kind] || kind));
+      el('kbd', {}, key),
+      el('span', { class: 'hotkey-what' }, KIND_HINT[kind] || kind)));
   }
+}
+
+// ─────────────────────────── the ticket ───────────────────────────
+// One form, two jobs: while a trade is open it edits that trade, and while
+// none is it holds the ticket the next one will open with. Either way the
+// instrument and the side are typed once per trade and never per marker.
+
+/** What the ticket is currently describing. */
+function ticketValues() {
+  return recorder?.openTrade || settings.ticket;
+}
+
+function applyTicket(patch) {
+  const open = recorder?.openTrade;
+  // Normalized on the way in either way, so the draft and a live trade cannot
+  // hold the same instrument in two different spellings.
+  if (open) recorder.updateTrade(open.id, patch);
+  else commitSettings({ ticket: { ...settings.ticket, ...normalizeTradePatch(patch) } });
+  renderTicket();
+}
+
+function renderTicket() {
+  const open = recorder?.openTrade || null;
+  const values = ticketValues();
+  const recording = recorder?.state === 'recording';
+
+  const form = $('#ticket');
+  form.dataset.open = String(Boolean(open));
+  form.dataset.side = values.direction || '';
+
+  const pair = $('#ticket-pair');
+  // Never fight the cursor of someone mid-word.
+  if (document.activeElement !== pair) pair.value = values.symbol || '';
+
+  for (const [sel, side] of [['#side-long', 'long'], ['#side-short', 'short']]) {
+    $(sel).setAttribute('aria-pressed', String(values.direction === side));
+  }
+  for (const [sel, account] of [['#acct-paper', 'paper'], ['#acct-live', 'live']]) {
+    $(sel).setAttribute('aria-pressed', String(values.account === account));
+  }
+
+  $('#btn-open-trade').hidden = Boolean(open);
+  $('#btn-open-trade').disabled = !recording;
+  $('#btn-close-trade').hidden = !open;
+  $('#ticket-running').hidden = !open;
+  if (open) $('#ticket-running-time').textContent = formatDuration((recorder?.elapsedMs || 0) - open.openedAtMs);
+
+  $('#ticket-hint').textContent = open
+    ? 'This trade is running. Every mark lands on it — change the pair or the side here and the '
+      + 'whole trade updates, marks included.'
+    : recording
+      ? 'Set the pair and the side, then open the trade — or just hit the entry hotkey and fill '
+        + 'them in while it runs. Either way you state them once.'
+      : 'Set up the ticket now if you like. A trade can only be opened while recording.';
+
+  const list = clear($('#instrument-list'));
+  for (const symbol of settings.instruments) list.append(el('option', { value: symbol }));
+}
+
+function wireTicket() {
+  // A form around the ticket keeps Enter from doing nothing useful; it must not
+  // navigate.
+  $('#ticket').addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!recorder?.openTradeId) $('#btn-open-trade').click();
+  });
+
+  $('#ticket-pair').addEventListener('input', (e) => {
+    applyTicket({ symbol: e.target.value });
+  });
+
+  for (const [sel, direction] of [['#side-long', 'long'], ['#side-short', 'short']]) {
+    $(sel).addEventListener('click', () => {
+      // Clicking the pressed side clears it, so a mis-click is one click to undo.
+      applyTicket({ direction: ticketValues().direction === direction ? '' : direction });
+    });
+  }
+
+  for (const [sel, account] of [['#acct-paper', 'paper'], ['#acct-live', 'live']]) {
+    $(sel).addEventListener('click', () => {
+      applyTicket({ account: ticketValues().account === account ? '' : account });
+    });
+  }
+
+  $('#btn-open-trade').addEventListener('click', () => {
+    if (!openTrade()) showAlert('Start recording before opening a trade.', 'warn');
+  });
+
+  $('#btn-close-trade').addEventListener('click', () => closeTrade());
 }
 
 // ─────────────────────────── library ───────────────────────────
@@ -204,6 +386,7 @@ async function renderLibrary() {
 
 function sessionRow(s) {
   const markers = (s.markers || []).length;
+  const trades = s.trades || [];
   const badges = [];
   if (s.status === SESSION_STATUS.INTERRUPTED) {
     badges.push(el('span', { class: 'badge badge-interrupted', title: 'Recovered after a refresh or crash — playable up to the last stored timeslice' }, 'interrupted'));
@@ -223,12 +406,21 @@ function sessionRow(s) {
       el('div', { class: 'session-date' }, formatDate(s.startedAt)),
       el('div', { class: 'session-time' }, formatClock(s.startedAt)),
     ),
+    // What was traded is the line you scan a journal by, so it leads.
+    el('div', { class: 'session-instruments' },
+      ...trades.map((t) => el('span', { class: 'trade-id' },
+        el('span', { class: `trade-symbol${t.symbol ? '' : ' is-unset'}` }, t.symbol || '—'),
+        sideBadge(t.direction),
+      )),
+      ...badges,
+      trades.length ? null : el('span', { class: 'empty' }, 'no trades logged'),
+    ),
     el('div', { class: 'session-stats' },
       stat(formatDuration(s.durationMs || 0), 'length'),
-      stat(String(markers), markers === 1 ? 'marker' : 'markers'),
+      stat(String(trades.length), trades.length === 1 ? 'trade' : 'trades'),
+      stat(String(markers), markers === 1 ? 'mark' : 'marks'),
       stat(formatBytes(s.bytes || 0), 'size'),
     ),
-    el('div', { class: 'marker-actions' }, ...badges),
   );
 }
 
@@ -303,6 +495,8 @@ function renderSettings() {
 function commitSettings(patch) {
   settings = saveSettings({ ...settings, ...patch });
   renderSettings();
+  // The ticket draft lives in settings, so it re-reads whenever they change.
+  renderTicket();
 }
 
 function wireSettings() {
@@ -412,7 +606,9 @@ function renderSupport() {
 
 async function boot() {
   wireSettings();
+  wireTicket();
   renderSettings();
+  renderTicket();
   $('#btn-record').addEventListener('click', onRecordClick);
   window.addEventListener('keydown', onKeyDown);
 
@@ -446,11 +642,15 @@ async function boot() {
 // The external marking seam, and enough state for a wrapper to drive the app.
 window.tradeJournal = {
   mark,
+  openTrade,
+  closeTrade,
   start: startRecording,
   stop: stopRecording,
   get state() { return recorder?.state || 'idle'; },
   get sessionId() { return recorder?.sessionId || null; },
   get markers() { return [...liveMarkers]; },
+  get trades() { return [...liveTrades]; },
+  get currentTrade() { return recorder?.openTrade || null; },
   review,
   get settings() { return { ...settings }; },
 };

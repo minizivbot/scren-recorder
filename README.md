@@ -27,6 +27,38 @@ have already decided — you capture the outcome, not the decision.
 
 So: one recording for the session, a keypress drops a marker, review seeks to it.
 
+## Trades, not marker metadata
+
+**The pair and the side belong to the trade, and are stated once.** You are long
+MNQ once — not once per note you take while the position is on. A session holds
+trades; a marker points at one with `tradeId` and carries only what is true of
+its own moment: when it happened, what kind it was, and anything you typed.
+
+The ticket at the top of the desk is where a trade is named. While a trade is
+open the ticket edits that trade; while none is, it holds the ticket the next
+one will open with, which is why it starts pre-filled with the last one you
+closed.
+
+| Lives on the trade | Lives on the marker |
+| --- | --- |
+| pair, side, account, trade note | offset, kind (entry/exit/note), note |
+
+The hotkeys follow from that, so marking never asks you anything:
+
+- `e` **entry** — opens a trade if none is open, then marks
+- `x` **exit** — marks, then closes the open trade
+- `n` **note** — marks, filed under whatever trade is running
+
+A trade can be opened with the ticket still blank; pressing entry the instant you
+click buy must never wait on typing. Fill the pair and side in while it runs, or
+in review afterwards — either way, once. Marks taken while flat stay unfiled
+rather than being guessed at, and a mark added by scrubbing in review is filed
+under whichever position the playhead is inside.
+
+Sessions recorded before trades existed are migrated on read: each distinct
+instrument/side/account among the old markers becomes one trade, and its markers
+are filed under it.
+
 - Nothing can be missed by reacting too slowly; the moment was already recorded.
 - The minutes before entry come for free, and that is the footage worth watching.
 - Zero video processing. No clipping, no re-encoding, no ffmpeg, no lost data.
@@ -49,12 +81,13 @@ is an exact timestamp with zero inference. Capture is requested with
 
 **No performance statistics.** A recording is not queryable — you cannot compute
 win rate, profit factor, expectancy or net P&L from it, and this app never tries.
-Marker details you type are labels for finding footage, not an accounting record.
-The UI says "no trade data source connected" rather than showing a computed zero.
+The pair and side you type on a trade are labels for finding footage, not an
+accounting record. The UI says "no trade data source connected" rather than
+showing a computed zero.
 
-Every marker carries `externalTradeId` and `externalSource`, always null. That is
-the seam where an authoritative trade record gets joined later. The join is not
-built.
+Every trade carries `externalTradeId` and `externalSource`, always null. That is
+the seam where an authoritative fill record gets joined later — on the trade,
+which is the thing a broker also calls a trade. The join is not built.
 
 ---
 
@@ -69,7 +102,8 @@ The in-page listener is implemented (`e` entry, `x` exit, `n` note, all
 rebindable). The UI states the limitation rather than implying it works globally.
 
 Making it global needs a different trigger, and both options drive the same entry
-point, `window.tradeJournal.mark({ kind })`, which is already exposed:
+points — `window.tradeJournal.mark({ kind })` and
+`window.tradeJournal.openTrade({ symbol, direction })` — both already exposed:
 
 | Option | Covers | Does not cover |
 | --- | --- | --- |
@@ -151,18 +185,20 @@ flow is "seek to a marker", this is handled in two places
 index.html              app shell
 src/session-recorder.js capture + storage core (the module this was built on)
 src/player.js           duration resolution and seeking for header-less webm
-src/review.js           player, marker rail, marker editing, scrub-and-mark
-src/app.js              recording UI, library, settings, the marking entry point
+src/review.js           player, marker rail, trade + marker editing, scrub-and-mark
+src/trade-ui.js         the trade ticket, rendered the same live and in review
+src/app.js              recording UI, the ticket, library, settings, entry points
 src/settings.js         persisted settings, capture presets, size estimates
-tests/unit/             chunk ordering, marker offsets, recovery, quota
+tests/unit/             chunk ordering, marker offsets, trades, recovery, quota
 tests/e2e/              real recordings in real Chromium, verified by playback
 ```
 
 ## Tests
 
-`npm test` — 41 unit tests over the four areas that can silently ruin a session:
-chunk ordering on reassembly, marker offset accuracy, recovery of an interrupted
-session, and quota-exceeded handling.
+`npm test` — 54 unit tests over the areas that can silently ruin a session:
+chunk ordering on reassembly, marker offset accuracy, trades owning the
+instrument (including migration of sessions recorded under the old shape),
+recovery of an interrupted session, and quota-exceeded handling.
 
 `npm run test:e2e` — records real sessions in real Chromium and plays them back.
 A recorder that produces an unplayable file passes every unit test and is still

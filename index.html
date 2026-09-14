@@ -5,13 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Trade Journal · Session Recorder</title>
   <link rel="stylesheet" href="src/styles.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%23e5484d'/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='3' y='4' width='3' height='8' rx='1' fill='%232ecc8f'/><rect x='10' y='6' width='3' height='7' rx='1' fill='%23f2545b'/></svg>">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="brand-dot" aria-hidden="true"></span>
-      <h1>Session Recorder</h1>
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <div class="brand-text">
+        <h1>Trade Journal</h1>
+        <span class="brand-sub">session recorder</span>
+      </div>
     </div>
     <div class="topbar-right">
       <div class="storage" id="storage-meter" title="Origin storage used by all recordings">
@@ -28,8 +31,9 @@
   <main>
     <!-- ───────────────────────── record view ───────────────────────── -->
     <section id="view-record">
-      <div class="panel record-panel">
-        <div class="record-main">
+      <!-- ── the desk: capture control + the open position ── -->
+      <div class="panel desk" id="desk" data-state="idle">
+        <div class="desk-head">
           <button class="btn btn-record" id="btn-record" type="button">
             <span class="rec-icon" aria-hidden="true"></span>
             <span id="btn-record-label">Start recording</span>
@@ -38,57 +42,79 @@
           <div class="record-status" id="record-status" data-state="idle">
             <span class="status-light" aria-hidden="true"></span>
             <span class="status-text" id="status-text">Not recording</span>
-            <span class="elapsed" id="elapsed" hidden>00:00</span>
+          </div>
+
+          <div class="tape">
+            <span class="tape-value" id="elapsed">00:00</span>
+            <span class="tape-label">session</span>
           </div>
         </div>
 
-        <p class="record-hint" id="record-hint">
-          One continuous recording for the whole session. Mark the moments as they happen —
-          nothing is ever cut, so you can always scrub back for more context.
-        </p>
+        <!-- The ticket. The pair and the side are stated HERE, once per trade —
+             never again on a note, an entry or an exit inside it. -->
+        <form class="ticket" id="ticket" data-open="false" autocomplete="off">
+          <div class="ticket-bar" aria-hidden="true"></div>
+
+          <div class="ticket-field ticket-symbol">
+            <label for="ticket-pair">Pair</label>
+            <input type="text" id="ticket-pair" name="symbol" list="instrument-list"
+                   placeholder="MNQ" maxlength="16" spellcheck="false">
+            <datalist id="instrument-list"></datalist>
+          </div>
+
+          <div class="ticket-field">
+            <span class="field-label" id="side-label">Side</span>
+            <div class="segmented" role="group" aria-labelledby="side-label">
+              <button class="seg seg-long" id="side-long" type="button" data-side="long" aria-pressed="false">Long</button>
+              <button class="seg seg-short" id="side-short" type="button" data-side="short" aria-pressed="false">Short</button>
+            </div>
+          </div>
+
+          <div class="ticket-field">
+            <span class="field-label" id="account-label">Account</span>
+            <div class="segmented" role="group" aria-labelledby="account-label">
+              <button class="seg" id="acct-paper" type="button" data-account="paper" aria-pressed="false">Paper</button>
+              <button class="seg" id="acct-live" type="button" data-account="live" aria-pressed="false">Live</button>
+            </div>
+          </div>
+
+          <div class="ticket-running" id="ticket-running" hidden>
+            <span class="ticket-running-value" id="ticket-running-time">00:00</span>
+            <span class="tape-label">in position</span>
+          </div>
+
+          <div class="ticket-actions">
+            <button class="btn btn-open" id="btn-open-trade" type="button">Open trade</button>
+            <button class="btn btn-close-trade" id="btn-close-trade" type="button" hidden>Close trade</button>
+          </div>
+
+          <p class="ticket-hint" id="ticket-hint">
+            Set the pair and the side once. Every entry, exit and note you mark while the trade is
+            open is filed under it — you never type the instrument again.
+          </p>
+        </form>
 
         <div class="hotkeys" id="hotkeys-strip"></div>
+      </div>
 
-        <div class="notice notice-focus">
-          <strong>Hotkeys only work while this tab is focused.</strong>
-          <p>
-            This is a real limitation, not a bug. A page can only receive <code>keydown</code> while it
-            has focus, so the moment you click into Tradovate these keys stop reaching this tab.
-            Browsers provide no API for a page to listen globally.
-          </p>
-          <details>
-            <summary>What would make marking global</summary>
-            <ul>
-              <li>
-                <strong>A browser extension.</strong> A background service worker with the
-                <code>commands</code> permission receives a hotkey regardless of which tab is focused,
-                and can call the marking API here. Works across tabs; still not across applications,
-                so it does not cover the Tradovate desktop app.
-              </li>
-              <li>
-                <strong>A desktop wrapper</strong> (Electron or Tauri). Registers an OS-level global
-                shortcut, so marking works while any application is focused, including the Tradovate
-                desktop app. This is the only option that covers every case.
-              </li>
-            </ul>
-            <p class="muted">
-              Both drive the same entry point: <code>window.tradeJournal.mark({ kind })</code>, which is
-              already exposed and callable from outside this page's own key handler.
-            </p>
-          </details>
-          <p class="fallback-note">
-            Meanwhile: every marker you miss live can be added afterwards by scrubbing to the moment in
-            review and marking there.
-          </p>
+      <!-- ── this session's trades and marks ── -->
+      <div class="deck">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Trades this session</h2>
+            <span class="count" id="live-trade-count">0</span>
+          </div>
+          <div class="trade-list" id="live-trade-list"></div>
+          <p class="empty" id="live-trade-empty">No trade opened yet.</p>
         </div>
 
-        <div class="live-markers">
-          <div class="live-markers-head">
-            <h2>Markers this session</h2>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Marks</h2>
             <span class="count" id="live-marker-count">0</span>
           </div>
           <ol class="marker-list" id="live-marker-list"></ol>
-          <p class="empty" id="live-marker-empty">No markers yet.</p>
+          <p class="empty" id="live-marker-empty">No marks yet.</p>
         </div>
       </div>
 
@@ -133,6 +159,10 @@
             <label>Exit <input type="text" id="set-key-exit" maxlength="1"></label>
             <label>Note <input type="text" id="set-key-note" maxlength="1"></label>
           </div>
+          <p class="setting-help">
+            Entry opens a trade if none is open. Exit closes the open one. A note never asks you
+            anything — it lands on whatever trade is running.
+          </p>
         </div>
 
         <div class="setting">
@@ -148,9 +178,43 @@
         </div>
       </div>
 
+      <div class="notice notice-focus">
+        <strong>Hotkeys only work while this tab is focused.</strong>
+        <p>
+          This is a real limitation, not a bug. A page can only receive <code>keydown</code> while it
+          has focus, so the moment you click into Tradovate these keys stop reaching this tab.
+          Browsers provide no API for a page to listen globally.
+        </p>
+        <details>
+          <summary>What would make marking global</summary>
+          <ul>
+            <li>
+              <strong>A browser extension.</strong> A background service worker with the
+              <code>commands</code> permission receives a hotkey regardless of which tab is focused,
+              and can call the marking API here. Works across tabs; still not across applications,
+              so it does not cover the Tradovate desktop app.
+            </li>
+            <li>
+              <strong>A desktop wrapper</strong> (Electron or Tauri). Registers an OS-level global
+              shortcut, so marking works while any application is focused, including the Tradovate
+              desktop app. This is the only option that covers every case.
+            </li>
+          </ul>
+          <p class="muted">
+            Both drive the same entry points: <code>window.tradeJournal.mark({ kind })</code> and
+            <code>window.tradeJournal.openTrade({ symbol, direction })</code>, both already exposed
+            and callable from outside this page's own key handler.
+          </p>
+        </details>
+        <p class="fallback-note">
+          Meanwhile: every marker you miss live can be added afterwards by scrubbing to the moment in
+          review and marking there.
+        </p>
+      </div>
+
       <!-- ───────────────────────── library ───────────────────────── -->
       <div class="panel library-panel">
-        <div class="library-head">
+        <div class="panel-head">
           <h2>Sessions</h2>
           <span class="count" id="session-count">0</span>
         </div>
@@ -158,8 +222,8 @@
           <strong>This is a review layer, not a statistics layer.</strong>
           <p>
             No win rate, profit factor, expectancy or P&amp;L is shown here, and none is inferred from a
-            recording or from anything typed into a marker — a video is not a queryable trade record.
-            Marker details are labels for finding footage.
+            recording or from anything typed into a trade — a video is not a queryable trade record.
+            The pair and the side are labels for finding footage.
           </p>
           <p class="muted">Performance statistics: <strong>no trade data source connected.</strong></p>
         </div>
@@ -189,6 +253,7 @@
           </div>
 
           <div class="timeline" id="timeline">
+            <div class="timeline-trades" id="timeline-trades"></div>
             <div class="timeline-track" id="timeline-track">
               <div class="timeline-played" id="timeline-played"></div>
               <div class="timeline-markers" id="timeline-markers"></div>
@@ -222,15 +287,29 @@
           </p>
         </div>
 
-        <aside class="marker-col">
-          <div class="marker-col-head">
-            <h3>Markers</h3>
-            <span class="count" id="review-marker-count">0</span>
+        <aside class="side-col">
+          <div class="side-block">
+            <div class="panel-head">
+              <h3>Trades</h3>
+              <span class="count" id="review-trade-count">0</span>
+              <button class="btn btn-ghost btn-small" id="btn-add-trade" type="button">+ Trade</button>
+            </div>
+            <div class="trade-list" id="review-trade-list"></div>
+            <p class="empty" id="review-trade-empty">
+              No trades logged. Add one to name the pair and the side for a run of marks.
+            </p>
           </div>
-          <ol class="marker-list marker-list-review" id="review-marker-list"></ol>
-          <p class="empty" id="review-marker-empty">
-            No markers. Scrub to a moment and use “Mark at playhead” to add one.
-          </p>
+
+          <div class="side-block">
+            <div class="panel-head">
+              <h3>Marks</h3>
+              <span class="count" id="review-marker-count">0</span>
+            </div>
+            <ol class="marker-list marker-list-review" id="review-marker-list"></ol>
+            <p class="empty" id="review-marker-empty">
+              No marks. Scrub to a moment and use “Mark at playhead” to add one.
+            </p>
+          </div>
         </aside>
       </div>
     </section>

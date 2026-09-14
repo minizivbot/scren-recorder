@@ -11,7 +11,11 @@
  *    seek. Nothing is ever cut.
  *  - There is no audio analysis here on purpose. A fill chime carries one bit of
  *    information and breaks if you mute, play music, or use the desktop app.
- *  - A marker can carry an externalTradeId. Nothing in this module ever fills it
+ *  - The instrument and the direction belong to a TRADE, not to a marker. You
+ *    are long MNQ once, not once per note you take while you are in it. A
+ *    session holds trades; markers point at one with tradeId and carry only
+ *    what is specific to their own moment.
+ *  - A trade can carry an externalTradeId. Nothing in this module ever fills it
  *    in or reads it. It is the seam where an authoritative trade record gets
  *    joined to the footage later. P&L is never inferred from a recording.
  *
@@ -48,6 +52,8 @@ export class SessionRecorder {
     this.startedAt = null;
     this.seq = 0;
     this.markers = [];
+    this.trades = [];
+    this.openTradeId = null;
     this.state = 'idle'; // idle | recording | stopping
 
     this._listeners = new Map();
@@ -157,6 +163,8 @@ export class SessionRecorder {
     this.startedAt = Date.now();
     this.seq = 0;
     this.markers = [];
+    this.trades = [];
+    this.openTradeId = null;
     this._pendingWrites = new Set();
     this._stoppedAt = null;
     this._quotaHandled = false;
@@ -169,6 +177,7 @@ export class SessionRecorder {
       mimeType,
       meta,
       markers: [],
+      trades: [],
       status: SESSION_STATUS.RECORDING,
       complete: false,
       // Heartbeat: recovery uses this to tell "interrupted" from "another tab is
@@ -279,16 +288,71 @@ export class SessionRecorder {
     }
   }
 
+  // ---- trades -----------------------------------------------------------
+
+  /** The trade markers are currently being filed under, if any. */
+  get openTrade() {
+    return this.trades.find((t) => t.id === this.openTradeId) || null;
+  }
+
+  /**
+   * Opens a trade. Everything marked from here until closeTrade() belongs to
+   * it, which is the whole point: the instrument and the direction are stated
+   * once, not re-typed onto every note taken while the position is on.
+   *
+   * The details can be blank at this moment — pressing the entry hotkey the
+   * instant you click buy should never block on typing. Fill them in with
+   * updateTrade() while the trade runs, or in review afterwards.
+   */
+  openNewTrade(data = {}) {
+    if (this.state !== 'recording') throw new Error('Not recording');
+    if (this.openTradeId) this.closeTrade();
+
+    const trade = makeTrade({ openedAtMs: Date.now() - this.startedAt, ...data });
+    this.trades.push(trade);
+    this.openTradeId = trade.id;
+    this._persistJournal();
+    this._emit('trade-opened', trade);
+    return trade;
+  }
+
+  updateTrade(id, patch) {
+    const trade = this.trades.find((t) => t.id === id);
+    if (!trade) return null;
+    Object.assign(trade, normalizeTradePatch(patch));
+    this._persistJournal();
+    this._emit('trade-updated', trade);
+    return trade;
+  }
+
+  closeTrade(id = this.openTradeId) {
+    const trade = this.trades.find((t) => t.id === id);
+    if (!trade) return null;
+
+    trade.closedAtMs = Date.now() - this.startedAt;
+    if (this.openTradeId === trade.id) this.openTradeId = null;
+    this._persistJournal();
+    this._emit('trade-closed', trade);
+    return trade;
+  }
+
   /**
    * Drops a marker at the current point in the recording.
-   * Returns the marker so the caller can attach details to it later.
+   *
+   * It is filed under the open trade automatically, so marking mid-position
+   * asks nothing of you. Returns the marker so the caller can attach a note
+   * to it later.
    */
   mark(data = {}) {
     if (this.state !== 'recording') throw new Error('Not recording');
 
-    const marker = makeMarker({ offsetMs: Date.now() - this.startedAt, ...data });
+    const marker = makeMarker({
+      offsetMs: Date.now() - this.startedAt,
+      tradeId: this.openTradeId,
+      ...data,
+    });
     this.markers.push(marker);
-    this._persistMarkers();
+    this._persistJournal();
     this._emit('marker', marker);
     return marker;
   }
@@ -297,28 +361,35 @@ export class SessionRecorder {
     const m = this.markers.find((x) => x.id === id);
     if (!m) return null;
     Object.assign(m, patch);
-    this._persistMarkers();
+    this._persistJournal();
     this._emit('marker-updated', m);
     return m;
   }
 
   removeMarker(id) {
     this.markers = this.markers.filter((m) => m.id !== id);
-    this._persistMarkers();
+    this._persistJournal();
     this._emit('marker-removed', id);
   }
 
-  _persistMarkers() {
+  /** Markers and trades share a session row, so they are written together. */
+  _persistJournal() {
     if (!this._record) return;
     this._record.markers = this.markers;
+    this._record.trades = this.trades;
     this._track(this._put('sessions', { ...this._record }).catch((err) => {
       this._emit('error', err);
-      console.error('[recorder] failed to persist markers', err);
+      console.error('[recorder] failed to persist the journal', err);
     }));
   }
 
   async stop(opts = {}) {
     if (this.state !== 'recording') return null;
+
+    // A position left open when the recording ends is closed at the end of the
+    // footage rather than left dangling — there is no more video to be in it.
+    if (this.openTradeId) this.closeTrade();
+
     this.state = 'stopping';
     this._stoppedAt = Date.now();
 
@@ -348,6 +419,7 @@ export class SessionRecorder {
     this._record.status = SESSION_STATUS.COMPLETE;
     this._record.complete = true;
     this._record.markers = this.markers;
+    this._record.trades = this.trades;
     if (opts.reason) this._record.stopReason = opts.reason;
 
     const record = { ...this._record };
@@ -391,6 +463,58 @@ export class SessionRecorder {
   }
 }
 
+// ---- trades -------------------------------------------------------------
+
+export const DIRECTIONS = ['long', 'short'];
+export const ACCOUNTS = ['paper', 'live'];
+
+/**
+ * Trade shape: the instrument, the side, and the account, stated once.
+ *
+ * Everything here answers "what position was this?", which is true for the
+ * whole position and therefore has no business being copied onto each marker
+ * inside it.
+ *
+ * externalTradeId / externalSource are the join seam to an authoritative fill
+ * record. They are never populated here. A trade in this app is a label for
+ * finding footage — not an accounting record, and no P&L is stored or inferred.
+ */
+export function makeTrade(data = {}) {
+  const { openedAtMs = 0, symbol, direction, account, ...rest } = data;
+  return {
+    id: `tr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    openedAtMs: Math.max(0, Math.round(openedAtMs)),
+    closedAtMs: null,
+    wallClock: new Date().toISOString(),
+    note: '',
+    externalTradeId: null,
+    externalSource: null,
+    ...normalizeTradePatch({ symbol, direction, account }),
+    ...rest,
+  };
+}
+
+/**
+ * Instruments are shouted in upper case on every venue, and a select can only
+ * ever hand back a known side, so both are normalized on the way in rather
+ * than at each of the places that display them.
+ */
+export function normalizeTradePatch(patch = {}) {
+  const out = { ...patch };
+  if ('symbol' in patch) out.symbol = String(patch.symbol ?? '').trim().toUpperCase();
+  if ('direction' in patch) out.direction = DIRECTIONS.includes(patch.direction) ? patch.direction : '';
+  if ('account' in patch) out.account = ACCOUNTS.includes(patch.account) ? patch.account : '';
+  if ('note' in patch) out.note = String(patch.note ?? '');
+  return out;
+}
+
+/** A trade is only worth showing as a ticket once it says what it was. */
+export function tradeLabel(trade) {
+  if (!trade) return '';
+  const side = trade.direction ? trade.direction.toUpperCase() : '';
+  return [trade.symbol || 'Unnamed', side].filter(Boolean).join(' ');
+}
+
 // ---- markers ------------------------------------------------------------
 
 export const MARKER_KINDS = ['entry', 'exit', 'note'];
@@ -398,8 +522,10 @@ export const MARKER_KINDS = ['entry', 'exit', 'note'];
 /**
  * Marker shape, in one place so live marks and review-time marks cannot drift.
  *
- * externalTradeId / externalSource are the join seam. They are never populated
- * here. A marker is a label for finding footage — not an accounting record.
+ * A marker holds only what is true of its own moment: when it happened, what
+ * kind of moment it was, and anything you want to say about it. What was being
+ * traded lives on the trade it points at, so marking mid-position asks nothing
+ * of you beyond the keystroke.
  */
 export function makeMarker(data = {}) {
   const { offsetMs = 0, ...rest } = data;
@@ -408,12 +534,8 @@ export function makeMarker(data = {}) {
     offsetMs: Math.max(0, Math.round(offsetMs)),
     wallClock: new Date().toISOString(),
     kind: 'entry', // entry | exit | note
-    symbol: '',
-    direction: '', // long | short | ''
-    account: '', // paper | live | ''
+    tradeId: null, // which trade this moment belongs to, if any
     note: '',
-    externalTradeId: null,
-    externalSource: null,
     ...rest,
   };
 }
@@ -435,7 +557,9 @@ export async function listSessions() {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const req = db.transaction('sessions').objectStore('sessions').getAll();
-    req.onsuccess = () => resolve(req.result.sort((a, b) => b.startedAt - a.startedAt));
+    req.onsuccess = () => resolve(
+      req.result.map(normalizeSession).sort((a, b) => b.startedAt - a.startedAt),
+    );
     req.onerror = () => reject(req.error);
   });
 }
@@ -444,7 +568,7 @@ export async function getSession(sessionId) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const req = db.transaction('sessions').objectStore('sessions').get(sessionId);
-    req.onsuccess = () => resolve(req.result || null);
+    req.onsuccess = () => resolve(req.result ? normalizeSession(req.result) : null);
     req.onerror = () => reject(req.error);
   });
 }
@@ -590,6 +714,144 @@ export async function removeSessionMarker(sessionId, markerId) {
 
 function sortMarkers(markers) {
   return [...markers].sort((a, b) => a.offsetMs - b.offsetMs);
+}
+
+// ---- trade edits outside a live recording -------------------------------
+
+export async function addTradeToSession(sessionId, data = {}) {
+  const session = await getSession(sessionId);
+  if (!session) throw new Error(`No such session: ${sessionId}`);
+
+  const trade = makeTrade({ addedDuringReview: true, ...data });
+  session.trades = sortTrades([...(session.trades || []), trade]);
+  await putSession(session);
+  return trade;
+}
+
+export async function updateSessionTrade(sessionId, tradeId, patch) {
+  const session = await getSession(sessionId);
+  if (!session) throw new Error(`No such session: ${sessionId}`);
+
+  let updated = null;
+  session.trades = sortTrades(
+    (session.trades || []).map((t) => (
+      t.id === tradeId ? (updated = { ...t, ...normalizeTradePatch(patch) }) : t
+    )),
+  );
+  if (!updated) return null;
+
+  await putSession(session);
+  return updated;
+}
+
+/**
+ * Deletes a trade. Its markers are kept and unfiled rather than deleted with
+ * it — the footage they point at is the expensive thing here, and losing a
+ * marked moment because a label was wrong would be a bad trade.
+ */
+export async function removeSessionTrade(sessionId, tradeId) {
+  const session = await getSession(sessionId);
+  if (!session) throw new Error(`No such session: ${sessionId}`);
+
+  session.trades = (session.trades || []).filter((t) => t.id !== tradeId);
+  session.markers = (session.markers || []).map((m) => (
+    m.tradeId === tradeId ? { ...m, tradeId: null } : m
+  ));
+  await putSession(session);
+  return session.trades;
+}
+
+/** Files a marker under a trade (or under none, with a null tradeId). */
+export async function assignMarkerToTrade(sessionId, markerId, tradeId) {
+  return updateSessionMarker(sessionId, markerId, { tradeId: tradeId || null });
+}
+
+function sortTrades(trades) {
+  return [...trades].sort((a, b) => a.openedAtMs - b.openedAtMs);
+}
+
+/**
+ * The trade a moment falls inside, used when a marker is added by scrubbing:
+ * if the playhead is inside a position, that is overwhelmingly the position
+ * the marker is about.
+ */
+export function tradeAtOffset(session, offsetMs) {
+  const trades = (session?.trades || []).filter((t) => t.openedAtMs <= offsetMs);
+  // Latest opener wins, so a trade opened inside another still takes its own marks.
+  return trades
+    .filter((t) => t.closedAtMs == null || t.closedAtMs >= offsetMs)
+    .sort((a, b) => b.openedAtMs - a.openedAtMs)[0] || null;
+}
+
+/** Markers filed under each trade, plus the ones filed under none. */
+export function groupMarkersByTrade(session) {
+  const markers = sortMarkers(session?.markers || []);
+  const byTrade = new Map(sortTrades(session?.trades || []).map((t) => [t.id, { trade: t, markers: [] }]));
+  const unfiled = [];
+
+  for (const m of markers) {
+    const group = m.tradeId ? byTrade.get(m.tradeId) : null;
+    if (group) group.markers.push(m);
+    else unfiled.push(m);
+  }
+
+  return { groups: [...byTrade.values()], unfiled };
+}
+
+/**
+ * Brings a stored session up to the current shape.
+ *
+ * Sessions recorded before trades existed carry the instrument and side on
+ * every marker. Rather than drop that (it was typed by hand) or keep reading
+ * two shapes forever, each distinct instrument/side/account is lifted into one
+ * trade and its markers are filed under it. The trade id is derived from those
+ * values, so normalizing the same session twice produces the same ids.
+ *
+ * Pure: it returns a new session and writes nothing. The migrated shape is
+ * persisted the next time something saves the session.
+ */
+export function normalizeSession(session) {
+  if (!session) return session;
+
+  const trades = (session.trades || []).map((t) => ({ ...t }));
+  const byKey = new Map(trades.map((t) => [legacyTradeKey(t), t]));
+
+  const markers = (session.markers || []).map((marker) => {
+    const { symbol, direction, account, ...rest } = marker;
+    if (marker.tradeId || !(symbol || direction || account)) {
+      // Drops the empty legacy columns; keeps everything else untouched.
+      return 'symbol' in marker ? { ...rest, tradeId: marker.tradeId ?? null } : marker;
+    }
+
+    const key = legacyTradeKey({ symbol, direction, account });
+    let trade = byKey.get(key);
+    if (!trade) {
+      trade = makeTrade({
+        id: `tr_legacy_${key.replace(/[^a-z0-9]+/gi, '-')}`,
+        symbol,
+        direction,
+        account,
+        openedAtMs: marker.offsetMs,
+        migratedFromMarkers: true,
+      });
+      byKey.set(key, trade);
+      trades.push(trade);
+    }
+
+    if (trade.migratedFromMarkers) {
+      // A migrated trade ran from its first marked moment to its last; that is
+      // the only window the old shape recorded.
+      trade.openedAtMs = Math.min(trade.openedAtMs, marker.offsetMs);
+      trade.closedAtMs = Math.max(trade.closedAtMs ?? 0, marker.offsetMs);
+    }
+    return { ...rest, tradeId: trade.id };
+  });
+
+  return { ...session, markers: sortMarkers(markers), trades: sortTrades(trades) };
+}
+
+function legacyTradeKey({ symbol = '', direction = '', account = '' } = {}) {
+  return `${String(symbol).trim().toUpperCase()}|${direction}|${account}`;
 }
 
 // ---- storage accounting -------------------------------------------------

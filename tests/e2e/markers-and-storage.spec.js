@@ -15,29 +15,36 @@ async function recordShortSession(page, { seconds = 8 } = {}) {
   return sessionId;
 }
 
-test('markers can be edited and new ones added by scrubbing', async ({ page }) => {
+test('the pair is named once on the trade, and marks inherit it', async ({ page }) => {
   await page.goto('/');
   const sessionId = await recordShortSession(page);
 
   await page.locator(`.session[data-session-id="${sessionId}"]`).click();
   await expect(page.locator('#review-marker-list li')).toHaveCount(1);
+  // The entry hotkey opened a trade, so there is one to name.
+  await expect(page.locator('#review-trade-list .trade')).toHaveCount(1);
 
-  // ── edit an existing marker ───────────────────────────────────────────
-  await page.locator('#review-marker-list li').first().getByText('Edit').click();
-  await page.selectOption('select[name="kind"]', 'entry');
-  await page.fill('input[name="symbol"]', 'MNQ');
-  await page.selectOption('select[name="direction"]', 'long');
-  await page.selectOption('select[name="account"]', 'paper');
-  await page.fill('textarea[name="note"]', 'failed breakdown, reclaimed the level');
+  // ── name the trade: once, for the whole position ──────────────────────
+  await page.locator('#review-trade-list .trade').first().getByText('Edit').click();
+  await page.fill('#review-trade-list input[name="symbol"]', 'MNQ');
+  await page.selectOption('#review-trade-list select[name="direction"]', 'long');
+  await page.selectOption('#review-trade-list select[name="account"]', 'paper');
+  await page.fill('#review-trade-list textarea[name="note"]', 'failed breakdown, reclaimed the level');
   await page.getByRole('button', { name: 'Save' }).click();
 
+  const ticket = page.locator('#review-trade-list .trade').first();
+  await expect(ticket).toContainText('MNQ');
+  await expect(ticket).toContainText('LONG');
+  await expect(ticket).toContainText('failed breakdown');
+
+  // The marker was never told any of that, and shows it anyway.
   await expect(page.locator('#review-marker-list li').first()).toContainText('MNQ');
   await expect(page.locator('#review-marker-list li').first()).toContainText('long');
-  await expect(page.locator('#review-marker-list li').first()).toContainText('failed breakdown');
 
   // It survives a reload, i.e. it was actually persisted.
   await page.reload();
   await page.locator(`.session[data-session-id="${sessionId}"]`).click();
+  await expect(page.locator('#review-trade-list .trade').first()).toContainText('MNQ');
   await expect(page.locator('#review-marker-list li').first()).toContainText('MNQ');
 
   // ── add a marker by scrubbing, the fallback for anything missed live ──
@@ -46,14 +53,17 @@ test('markers can be edited and new ones added by scrubbing', async ({ page }) =
   await page.click('#btn-mark-here');
 
   await expect(page.locator('#review-marker-list li')).toHaveCount(2);
-  // It opens straight into the editor so the detail can be typed immediately.
-  await expect(page.locator('textarea[name="note"]')).toBeVisible();
-  await page.fill('input[name="symbol"]', 'MES');
+  // It opens straight into the editor so the detail can be typed immediately —
+  // and the editor asks for a note, never again for the instrument.
+  await expect(page.locator('#review-marker-list textarea[name="note"]')).toBeVisible();
+  await expect(page.locator('#review-marker-list input[name="symbol"]')).toHaveCount(0);
+  await page.fill('#review-marker-list textarea[name="note"]', 'missed this live');
   await page.getByRole('button', { name: 'Save' }).click();
 
-  const markers = await page.evaluate(async (id) => {
+  const { markers, trades } = await page.evaluate(async (id) => {
     const { getSession } = await import('/src/session-recorder.js');
-    return (await getSession(id)).markers;
+    const s = await getSession(id);
+    return { markers: s.markers, trades: s.trades };
   }, sessionId);
 
   expect(markers).toHaveLength(2);
@@ -61,13 +71,59 @@ test('markers can be edited and new ones added by scrubbing', async ({ page }) =
   const added = markers.find((m) => m.addedDuringReview);
   expect(added.offsetMs).toBeGreaterThan(4500);
   expect(added.offsetMs).toBeLessThan(5500);
-  expect(added.symbol).toBe('MES');
+  expect(added.note).toBe('missed this live');
 
-  // The join seam is present and empty — nothing infers a trade from this.
+  // Scrubbed into an open position, so it was filed there without being asked.
+  expect(trades).toHaveLength(1);
+  expect(trades[0].symbol).toBe('MNQ');
+  expect(added.tradeId).toBe(trades[0].id);
+
+  // No marker duplicates what the trade already says.
   for (const m of markers) {
-    expect(m.externalTradeId).toBeNull();
+    expect(m).not.toHaveProperty('symbol');
     expect(m).not.toHaveProperty('pnl');
   }
+
+  // The join seam is present and empty — nothing infers a trade record here.
+  expect(trades[0].externalTradeId).toBeNull();
+  expect(trades[0]).not.toHaveProperty('pnl');
+});
+
+test('a trade can be opened from the ticket and marks land on it untouched', async ({ page }) => {
+  await page.goto('/');
+
+  // The pair and the side are stated once, before a single mark exists.
+  await page.fill('#ticket-pair', 'mes');
+  await page.click('#side-short');
+  await expect(page.locator('#side-short')).toHaveAttribute('aria-pressed', 'true');
+
+  await page.click('#btn-record');
+  await waitForRecording(page);
+  await page.click('#btn-open-trade');
+
+  await expect(page.locator('#ticket')).toHaveAttribute('data-open', 'true');
+  await expect(page.locator('#live-trade-list .trade')).toContainText('MES');
+  await expect(page.locator('#live-trade-list .trade')).toContainText('SHORT');
+
+  // Three marks, no typing.
+  await page.locator('body').press('n');
+  await page.locator('body').press('n');
+  await page.waitForTimeout(1500);
+  await page.locator('body').press('x'); // exit closes the position
+
+  await expect(page.locator('#ticket')).toHaveAttribute('data-open', 'false');
+  await expect(page.locator('#live-marker-list li')).toHaveCount(3);
+  await expect(page.locator('#live-marker-list li').first()).toContainText('MES');
+
+  const trades = await page.evaluate(() => window.tradeJournal.trades);
+  const markers = await page.evaluate(() => window.tradeJournal.markers);
+  expect(trades).toHaveLength(1);
+  expect(trades[0]).toMatchObject({ symbol: 'MES', direction: 'short' });
+  expect(trades[0].closedAtMs).not.toBeNull();
+  expect(markers.every((m) => m.tradeId === trades[0].id)).toBe(true);
+
+  await page.click('#btn-record');
+  await expect(page.locator('#record-status')).toHaveAttribute('data-state', 'idle');
 });
 
 test('deleting a session frees its space', async ({ page }) => {

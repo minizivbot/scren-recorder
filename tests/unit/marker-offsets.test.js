@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { resetDatabase } from '../helpers/db.js';
 import {
-  SessionRecorder, getSession, seekTargetMs, makeMarker,
+  SessionRecorder, getSession, seekTargetMs, makeMarker, makeTrade,
   addMarkerToSession, updateSessionMarker, removeSessionMarker, formatOffset,
 } from '../../src/session-recorder.js';
 import { installBrowserMocks, latestRecorder, flush } from '../helpers/browser-mocks.js';
@@ -59,16 +59,22 @@ describe('marker offset accuracy', () => {
     const sessionId = await rec.start();
 
     clock = T0 + 12_000;
-    rec.mark({ kind: 'entry', symbol: 'MES', direction: 'long' });
+    rec.openNewTrade({ symbol: 'MES', direction: 'long' });
+    rec.mark({ kind: 'entry' });
     clock = T0 + 400_000;
-    rec.mark({ kind: 'exit', symbol: 'MES' });
+    rec.mark({ kind: 'exit' });
     await flush();
     await rec.stop();
 
     const session = await getSession(sessionId);
     expect(session.markers.map((m) => m.offsetMs)).toEqual([12_000, 400_000]);
-    expect(session.markers[0].symbol).toBe('MES');
     expect(session.markers[1].kind).toBe('exit');
+
+    // The instrument was stated once and both marks inherit it.
+    expect(session.trades).toHaveLength(1);
+    expect(session.trades[0].symbol).toBe('MES');
+    expect(session.markers.map((m) => m.tradeId)).toEqual([session.trades[0].id, session.trades[0].id]);
+    for (const m of session.markers) expect(m).not.toHaveProperty('symbol');
   });
 
   it('applies the configured pre-roll, clamped at the start of the recording', () => {
@@ -87,10 +93,17 @@ describe('marker offset accuracy', () => {
   });
 
   it('carries an external trade id field that nothing populates', () => {
+    // The seam for joining an authoritative fill record later. It sits on the
+    // trade, which is the thing a broker also calls a trade. Empty by design.
+    const t = makeTrade({ openedAtMs: 10 });
+    expect(t).toHaveProperty('externalTradeId', null);
+    expect(t).toHaveProperty('externalSource', null);
+    expect(t).not.toHaveProperty('pnl');
+
+    // A marker says when and what kind, and points at the trade. Nothing else.
     const m = makeMarker({ offsetMs: 10 });
-    // The seam for joining an authoritative trade record later. Empty by design.
-    expect(m).toHaveProperty('externalTradeId', null);
-    expect(m).toHaveProperty('externalSource', null);
+    expect(m).toHaveProperty('tradeId', null);
+    expect(m).not.toHaveProperty('symbol');
     expect(m).not.toHaveProperty('pnl');
   });
 
@@ -121,10 +134,10 @@ describe('marker offset accuracy', () => {
     await rec.stop();
 
     const edited = await updateSessionMarker(sessionId, m.id, {
-      symbol: 'MNQ', direction: 'short', note: 'faded the open', account: 'paper',
+      kind: 'note', note: 'faded the open',
     });
     expect(edited.offsetMs).toBe(45_000);
-    expect(edited.symbol).toBe('MNQ');
+    expect(edited.kind).toBe('note');
     expect(edited.note).toBe('faded the open');
 
     expect(await updateSessionMarker(sessionId, 'nope', { note: 'x' })).toBeNull();
