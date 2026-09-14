@@ -190,15 +190,36 @@ From `npm run test:e2e`, on the synthetic capture described below:
   and a duration within one 2 s timeslice of where it was cut, and the partial
   file parsed cleanly and played.
 
-### What the tests cannot cover here
+### What the tests cannot cover here, and why
 
-The container these were developed in has **no display capture source**, so
-`getDisplayMedia` returns `NotReadableError` under every flag combination
-(headless and headful under Xvfb, tab capture and desktop capture alike). The
-e2e suite therefore substitutes **the capture source only** — a canvas-backed
-`MediaStream` — and leaves everything downstream real: real `MediaRecorder`
-encoding, real timeslice chunks, real IndexedDB, real reassembly, real playback.
+Display capture cannot be started in the container these were developed in. This
+was diagnosed, not assumed:
 
-The one thing that remains unverified here is the OS handing frames to the
-browser. **Picking a real screen and confirming the picture is your charts is
-worth doing once on your own machine**; nothing after that point is untested.
+- The X11 screen capturer **initialises successfully** — it attaches an X shared
+  memory segment, reports MIT-SHM v1.2 with pixmaps and XRandR v1.6, and selects
+  source `screen:0:0`. Device launch then fails with video capture error 31, and
+  `getDisplayMedia` rejects with `NotReadableError`.
+- Tab capture (`--auto-accept-this-tab-capture` with `preferCurrentTab`), which
+  goes through the compositor rather than the X11 capturer, fails identically.
+- A **fake camera device launches fine** and records — so the video capture stack
+  itself works here. It is display capture specifically that will not start.
+- Tried and ruled out: headless and headful under Xvfb (with RANDR, DAMAGE,
+  COMPOSITE and MIT-SHM), `--ozone-platform=x11`, every
+  `--auto-select-desktop-capture-source` name, `--disable-features=MojoVideoCapture`,
+  SwiftShader, and the sandbox/shm flags. Installing real Google Chrome is
+  blocked by the network proxy.
+
+So the suite substitutes **the capture source only**, two ways:
+
+- Most specs use a canvas-backed stream, because they need frame CONTENT that can
+  be verified against known timestamps.
+- `real-capture-stack.spec.js` uses a fake camera device, so one test drives the
+  app with a track that genuinely came out of Chrome's capture pipeline — real
+  constraints, real settings, a real device-level `ended`.
+
+Everything downstream is real in both cases: real MediaRecorder encoding, real
+timeslice chunks, real IndexedDB, real reassembly, real playback.
+
+**The one step never exercised here is the OS handing screen frames to the
+browser.** Run it locally once, pick a real screen, and confirm the picture is
+your charts. Nothing after that point is untested.
