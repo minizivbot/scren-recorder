@@ -39,6 +39,9 @@ jobs:
       # guard the app too. A broken build should not ship an .exe.
       - run: npm test
 
+      # --publish never: electron-builder sees CI and would otherwise try to
+      # push a GitHub release on every build, which fails without a token and
+      # is not what a branch build should do anyway. Releases are cut by tag.
       - run: npm run dist:win
 
       - uses: actions/upload-artifact@v4

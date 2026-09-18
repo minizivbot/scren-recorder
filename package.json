@@ -12,7 +12,7 @@
     "test:all": "vitest run && playwright test",
     "app": "electron .",
     "start": "electron .",
-    "dist:win": "electron-builder --win --x64",
+    "dist:win": "electron-builder --win --x64 --publish never",
     "dist:dir": "electron-builder --dir"
   },
   "devDependencies": {
