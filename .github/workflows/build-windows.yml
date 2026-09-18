@@ -1,0 +1,52 @@
+# Builds the Windows app.
+#
+# The .exe is ~100 MB, which is far too big to keep in the repository, so it is
+# built here instead and attached to the run. Download it from the Actions tab:
+# pick the newest run, then "TradeJournalRecorder" under Artifacts.
+#
+# Pushing a tag like v0.1.0 also publishes it as a Release, which gives a
+# permanent link that does not expire.
+name: Build Windows app
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # The recorder core is shared with the browser version, so the unit tests
+      # guard the app too. A broken build should not ship an .exe.
+      - run: npm test
+
+      - run: npm run dist:win
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TradeJournalRecorder
+          path: dist/TradeJournalRecorder.exe
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Publish a release on a tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/TradeJournalRecorder.exe
+          generate_release_notes: true

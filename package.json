@@ -9,11 +9,52 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:all": "vitest run && playwright test"
+    "test:all": "vitest run && playwright test",
+    "app": "electron .",
+    "start": "electron .",
+    "dist:win": "electron-builder --win portable --x64",
+    "dist:dir": "electron-builder --dir"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
+    "electron": "44.4.2",
+    "electron-builder": "^26.15.3",
     "fake-indexeddb": "6.2.5",
     "vitest": "5.0.0"
-  }
+  },
+  "main": "electron/main.js",
+  "productName": "Trade Journal Recorder",
+  "build": {
+    "appId": "com.tradejournal.recorder",
+    "productName": "Trade Journal Recorder",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "src/**/*",
+      "electron/**/*",
+      "!**/*.map"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "TradeJournalRecorder.exe"
+    },
+    "portable": {
+      "artifactName": "TradeJournalRecorder.exe"
+    },
+    "linux": {
+      "target": [
+        "dir"
+      ]
+    }
+  },
+  "author": "Ziv"
 }

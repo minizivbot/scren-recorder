@@ -9,6 +9,7 @@ import {
 import { loadSettings, saveSettings, captureOptions, estimateBytesPerHour, PRESETS } from './settings.js';
 import { ReviewView } from './review.js';
 import { BridgeClient } from './bridge-client.js';
+import { isDesktop, initDesktop, toAccelerators } from './desktop.js';
 import { $, el, clear, formatDate, formatClock, formatDuration } from './dom.js';
 
 const KIND_LABEL = { entry: 'Entry', exit: 'Exit', note: 'Note' };
@@ -51,6 +52,7 @@ function startRecording() {
   liveMarkers = [];
 
   recorder.on('start', () => {
+    window.desktop?.setRecordingState(true);
     setRecordingUi(true);
     renderLiveMarkers();
     startElapsedTimer();
@@ -82,6 +84,7 @@ function startRecording() {
   });
 
   recorder.on('stop', () => {
+    window.desktop?.setRecordingState(false);
     setRecordingUi(false);
     stopElapsedTimer();
     renderLibrary();
@@ -123,32 +126,53 @@ function mark(data = {}) {
 
 // ─────────────────────────── global hotkeys ───────────────────────────
 
-const bridge = new BridgeClient({
-  onCommand: (cmd) => {
-    if (cmd.command === 'stop') {
-      // Stopping remotely is fine. Starting is not: getDisplayMedia needs a
-      // real gesture in the page, so no hotkey can begin a session.
-      stopRecording();
-      return;
-    }
+function handleRemoteCommand(cmd) {
+  if (cmd.command === 'stop') {
+    // Stopping this way is fine. Starting is not: getDisplayMedia needs a real
+    // gesture in the window, so no hotkey can begin a session.
+    stopRecording();
+    return;
+  }
 
-    if (!recorder || recorder.state !== 'recording') {
-      showAlert('A global hotkey fired, but nothing is recording — the marker was not saved.', 'warn');
-      return;
-    }
+  if (!recorder || recorder.state !== 'recording') {
+    showAlert('A global hotkey fired, but nothing is recording — the marker was not saved.', 'warn');
+    return;
+  }
 
-    mark({
-      kind: cmd.kind,
-      symbol: cmd.symbol || '',
-      direction: cmd.direction || '',
-      account: cmd.account || '',
-      note: cmd.note || '',
-      source: 'hotkey',
-    });
-  },
+  mark({
+    kind: cmd.kind,
+    symbol: cmd.symbol || '',
+    direction: cmd.direction || '',
+    account: cmd.account || '',
+    note: cmd.note || '',
+    source: 'hotkey',
+  });
+}
 
+// In a browser the commands arrive over the local HTTP bridge. In the desktop
+// app the OS delivers them directly, so no bridge and no helper tool.
+const bridge = isDesktop() ? null : new BridgeClient({
+  onCommand: handleRemoteCommand,
   onStatus: ({ connected, message }) => renderBridgeStatus(connected, message),
 });
+
+/** Reports which OS shortcuts registered, and which another app already owns. */
+function renderShortcutStatus(result) {
+  const taken = Object.entries(result || {})
+    .filter(([, v]) => !v.ok)
+    .map(([name, v]) => `${name} (${v.accelerator})`);
+
+  const state = $('#bridge-state');
+  state.dataset.connected = String(taken.length === 0);
+  $('#bridge-label').textContent = taken.length === 0
+    ? 'Global hotkeys: ready'
+    : 'Global hotkeys: some are taken';
+
+  $('#bridge-help').textContent = taken.length === 0
+    ? 'Marking works while Tradovate has focus — these are registered with Windows itself, '
+      + 'so this window does not need to be in front.'
+    : `Another application already owns ${taken.join(', ')}. Change them in Settings.`;
+}
 
 function renderBridgeStatus(connected, message) {
   const state = $('#bridge-state');
@@ -355,6 +379,11 @@ function renderSettings() {
 function commitSettings(patch) {
   settings = saveSettings({ ...settings, ...patch });
   renderSettings();
+
+  // The OS holds the shortcuts, so a rebind has to be handed back to it.
+  if (isDesktop() && patch.hotkeys) {
+    window.desktop.registerShortcuts(toAccelerators(settings.hotkeys)).then(renderShortcutStatus);
+  }
 }
 
 function wireSettings() {
@@ -477,7 +506,18 @@ async function boot() {
   });
 
   renderSupport();
-  bridge.connect();
+
+  if (isDesktop()) {
+    // Shortcuts come from the OS; nothing else to install and nothing to leave
+    // running. This is the whole reason the desktop app exists.
+    const desktop = await initDesktop({
+      onCommand: handleRemoteCommand,
+      onShortcuts: renderShortcutStatus,
+    });
+    await desktop?.registerShortcuts(toAccelerators(settings.hotkeys));
+  } else {
+    bridge.connect();
+  }
 
   // Anything that would delay the record gesture happens here, not in the click.
   const recovered = await recoverInterruptedSessions();
@@ -500,6 +540,7 @@ async function boot() {
 window.tradeJournal = {
   mark,
   bridge,
+  handleRemoteCommand,
   start: startRecording,
   stop: stopRecording,
   get state() { return recorder?.state || 'idle'; },

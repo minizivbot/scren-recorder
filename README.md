@@ -6,18 +6,42 @@ chart context around it.
 
 Nothing is ever cut. Review is a seek, not a clip.
 
+## Run it as an app (recommended)
+
+Download **TradeJournalRecorder.exe** and double-click it. No terminal, no
+server to leave running, no browser tab to keep open, and nothing else to
+install — global hotkeys are built in.
+
+Where to get it:
+
+- **GitHub → Actions tab** → newest "Build Windows app" run → **Artifacts** →
+  `TradeJournalRecorder`. A fresh build is produced on every push.
+- Or build it yourself on Windows: `npm install` then `npm run dist:win`.
+  The .exe lands in `dist/`.
+
+It is portable: it runs from wherever you put it and installs nothing.
+Recordings live in the app's own storage, not in the folder.
+
+### Or run it in a browser
+
+The browser version is still fully supported and is what the test suite mostly
+exercises. It needs a terminal and a helper for global hotkeys:
+
 ```
-npm install
-npm run dev        # http://localhost:5173
+npm install        # only needed for tests
+node scripts/serve.mjs
+```
+
+Then open http://localhost:5173 in Chrome or Edge. It must be **served**, not
+opened as a file: `getDisplayMedia` and `navigator.storage.persist()` both
+require a secure context, which `http://localhost` satisfies and `file://` does
+not.
+
+```
 npm test           # unit tests
-npm run test:e2e   # real recordings in real Chromium
+npm run test:e2e   # real recordings in real Chromium, plus the desktop app
+npm run app        # run the desktop app from source
 ```
-
-It must be **served**, not opened as a file. `getDisplayMedia` and
-`navigator.storage.persist()` both require a secure context; `http://localhost`
-qualifies, `file://` does not.
-
----
 
 ## Why it records continuously
 
@@ -77,11 +101,10 @@ Content-Type: application/json
 
 The page subscribes to an event stream and marks when a command arrives.
 
-### Setup (Windows, about two minutes)
+### In the app: nothing to set up
 
-1. Install [AutoHotkey v2](https://www.autohotkey.com).
-2. Start the recorder: `node scripts/serve.mjs`
-3. Double-click `tools/trade-journal-hotkeys.ahk`. A green **H** appears in the tray.
+The desktop app registers the shortcuts with Windows itself, through Electron's
+`globalShortcut`. They work the moment the app is open, with no helper installed.
 
 | Key | Does |
 | --- | --- |
@@ -92,9 +115,18 @@ The page subscribes to an event stream and marks when a command arrives.
 | `Ctrl+Alt+S` | Entry, short |
 | `Ctrl+Alt+Q` | Stop the session |
 
-Edit the top of the `.ahk` file to rebind. AutoHotkey is not special here —
-a Stream Deck, macro keyboard or foot pedal works just as well, since they all
-just post to the same URL.
+If another application already owns one of these, the app says so on screen
+rather than leaving you to discover it mid-trade. Rebind in Settings.
+
+### In a browser: one helper
+
+The browser version cannot register an OS shortcut, so it needs something
+outside the browser to post to the bridge. Install
+[AutoHotkey v2](https://www.autohotkey.com) and double-click
+`tools/trade-journal-hotkeys.ahk`. Same keys as above.
+
+Anything that can send an HTTP request works just as well — a Stream Deck, a
+macro keyboard, a foot pedal.
 
 ### What a hotkey cannot do
 
@@ -197,6 +229,9 @@ flow is "seek to a marker", this is handled in two places
 
 ```
 index.html              app shell
+electron/main.js        desktop app: window, OS shortcuts, screen picker
+electron/preload.cjs    the only channel between the page and the OS
+src/desktop.js          screen picker UI and desktop wiring
 src/session-recorder.js capture + storage core (the module this was built on)
 src/bridge-client.js    subscribes to the local bridge for global hotkeys
 scripts/bridge.mjs      the mark bridge: hotkey in, event stream out
