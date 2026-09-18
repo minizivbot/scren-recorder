@@ -1,10 +1,44 @@
-# Trade Journal · Session Recorder
+# Trade Journal
 
-Record one continuous screen capture for a whole trading session, drop timestamped
-markers into it as things happen, and review each moment afterwards with the full
-chart context around it.
+A trading journal with the session recorded underneath it.
+
+Log what you took and why, and get your numbers back — win rate, expectancy,
+profit factor, and which of your own setups actually pay. Underneath, one
+continuous screen recording of the session with timestamped markers, so any
+trade can be watched back with the setup forming rather than described from
+memory.
 
 Nothing is ever cut. Review is a seek, not a clip.
+
+## Where the numbers come from
+
+Every statistic is computed from **trades you enter by hand**, and from nothing
+else. Nothing is inferred from the recording, from a marker, or from anything
+typed into a marker — a video is not a queryable record of what you traded, and
+a number derived from one would be a guess wearing a number's clothes.
+
+A marker says *something happened here*. A trade says what it was worth. They
+are separate records, and a trade may link to a session so you can jump to the
+footage — that is the whole relationship between them.
+
+With no trades logged, the dashboard says so. It never shows a zero, because an
+unknown win rate and a 0% win rate look identical on screen and mean opposite
+things. Results are self-reported: this is your journal, not a broker statement.
+
+## What it does
+
+- **Overview** — net R, win rate, expectancy, profit factor, average win and
+  loss, max drawdown and current streak, over 7/30/90 days or all time. The
+  record button sits right underneath.
+- **Journal** — every day you traded or recorded, with its R, its rating, your
+  notes, each trade, and a link straight to that day's footage.
+- **Trades** — the full table, editable, plus a breakdown by your own setups so
+  you can see which ones are worth taking. Tags with too few trades behind them
+  say so rather than pretending to be evidence.
+- **Recordings** — the session library and the review player.
+- **After every session** — rate the day, then log the trades while you still
+  remember why you took them. All of it skippable; a journal you cannot skip is
+  a journal you stop opening.
 
 ## Run it as an app (recommended)
 

@@ -202,6 +202,29 @@ export async function decodeFramesToPng(filePath, outDir, { fps = 1 } = {}) {
   return files.map((f) => path.join(outDir, f));
 }
 
+/**
+ * Stops a recording and dismisses the end-of-session review.
+ *
+ * Stopping now opens the review wizard, which covers the page — tests that care
+ * about what happened to the recording rather than the journal skip past it.
+ */
+export async function stopAndSkipReview(page) {
+  await page.click('#btn-record');
+  await page.waitForFunction(() => window.tradeJournal?.state === 'idle');
+
+  const skip = page.getByRole('button', { name: 'Skip' });
+  if (await skip.count()) {
+    await skip.click();
+    await page.waitForSelector('.wizard', { state: 'detached' });
+  }
+}
+
+/** Switches to one of the app's pages. */
+export async function gotoView(page, view) {
+  await page.click(`[data-view="${view}"]`);
+  await page.waitForSelector(`#view-${view}:not([hidden])`);
+}
+
 /** Waits until the app reports it is recording. */
 export async function waitForRecording(page) {
   await page.waitForFunction(() => window.tradeJournal?.state === 'recording');

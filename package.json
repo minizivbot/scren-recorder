@@ -1,6 +1,6 @@
 {
   "name": "trade-journal-recorder",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Continuous screen-recorded trade journal with timestamped markers.",
@@ -12,7 +12,7 @@
     "test:all": "vitest run && playwright test",
     "app": "electron .",
     "start": "electron .",
-    "dist:win": "electron-builder --win portable --x64",
+    "dist:win": "electron-builder --win --x64",
     "dist:dir": "electron-builder --dir"
   },
   "devDependencies": {
@@ -26,9 +26,10 @@
   "productName": "Trade Journal Recorder",
   "build": {
     "appId": "com.tradejournal.recorder",
-    "productName": "Trade Journal Recorder",
+    "productName": "Trade Journal",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
     "files": [
       "index.html",
@@ -39,21 +40,40 @@
     "win": {
       "target": [
         {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
           "target": "portable",
           "arch": [
             "x64"
           ]
         }
       ],
-      "artifactName": "TradeJournalRecorder.exe"
+      "icon": "build/icon.png",
+      "artifactName": "TradeJournal-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "TradeJournalRecorder.exe"
+      "artifactName": "TradeJournal-Portable-${version}.${ext}"
     },
     "linux": {
       "target": [
         "dir"
-      ]
+      ],
+      "icon": "build/icon.png",
+      "category": "Utility"
+    },
+    "copyright": "Trade Journal",
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Trade Journal",
+      "artifactName": "TradeJournal-Setup-${version}.${ext}",
+      "uninstallDisplayName": "Trade Journal"
     }
   },
   "author": "Ziv"

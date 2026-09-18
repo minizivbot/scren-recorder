@@ -2,7 +2,7 @@
  * Definition of done #7 and #8: markers can be edited after recording and added
  * while scrubbing, and deleting a session measurably frees space.
  */
-import { test, expect, waitForRecording } from './fixtures.js';
+import { test, expect, waitForRecording, stopAndSkipReview, gotoView } from './fixtures.js';
 
 async function recordShortSession(page, { seconds = 8 } = {}) {
   await page.click('#btn-record');
@@ -10,8 +10,8 @@ async function recordShortSession(page, { seconds = 8 } = {}) {
   await page.locator('body').press('e');
   await page.waitForTimeout(seconds * 1000);
   const sessionId = await page.evaluate(() => window.tradeJournal.sessionId);
-  await page.click('#btn-record');
-  await expect(page.locator('#record-status')).toHaveAttribute('data-state', 'idle');
+  await stopAndSkipReview(page);
+  await gotoView(page, 'recordings');
   return sessionId;
 }
 
@@ -37,10 +37,14 @@ test('markers can be edited and new ones added by scrubbing', async ({ page }) =
 
   // It survives a reload, i.e. it was actually persisted.
   await page.reload();
+  await gotoView(page, 'recordings');
   await page.locator(`.session[data-session-id="${sessionId}"]`).click();
   await expect(page.locator('#review-marker-list li').first()).toContainText('MNQ');
 
   // ── add a marker by scrubbing, the fallback for anything missed live ──
+  // The transport stays disabled until the recording is loaded, so that a mark
+  // cannot land at 0 while the playhead has not caught up yet.
+  await expect(page.locator('#btn-mark-here')).toBeEnabled();
   await page.evaluate(() => { document.getElementById('player').currentTime = 5; });
   await page.waitForFunction(() => !document.getElementById('player').seeking);
   await page.click('#btn-mark-here');
@@ -127,19 +131,6 @@ test('deleting a session frees its space', async ({ page }) => {
   // figure is padded. That is why the meter reports our own total instead.
 });
 
-test('the UI states plainly that it computes no performance statistics', async ({ page }) => {
-  await page.goto('/');
-  const scope = page.locator('.notice-scope');
-  await expect(scope).toContainText('review layer, not a statistics layer');
-  await expect(scope).toContainText('no trade data source connected');
-
-  // No performance number is shown anywhere, not even a placeholder zero.
-  const body = await page.locator('body').innerText();
-  expect(body).not.toMatch(/win rate\s*[:=]\s*\d/i);
-  expect(body).not.toMatch(/P&L\s*[:=]/i);
-  expect(body).not.toMatch(/profit factor\s*[:=]\s*\d/i);
-});
-
 test('the focus limitation is solved, and its one remaining edge is stated', async ({ page }) => {
   await page.goto('/');
   const notice = page.locator('.notice-focus');
@@ -155,8 +146,8 @@ test('the focus limitation is solved, and its one remaining edge is stated', asy
   await expect(notice).toContainText('trade-journal-hotkeys.ahk');
 
   // And the one thing a hotkey genuinely cannot do is stated, not glossed over.
-  await notice.locator('summary').nth(1).click();
-  await expect(notice).toContainText('Starting a recording still has to be a click');
+  await notice.locator('summary').last().click();
+  await expect(notice).toContainText('no hotkey can begin a session');
   await expect(notice).toContainText('getDisplayMedia');
 
   // The external marking entry point is exposed for any other trigger.

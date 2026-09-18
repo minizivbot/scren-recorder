@@ -11,6 +11,9 @@ import { ReviewView } from './review.js';
 import { BridgeClient } from './bridge-client.js';
 import { isDesktop, initDesktop, toAccelerators } from './desktop.js';
 import { $, el, clear, formatDate, formatClock, formatDuration } from './dom.js';
+import { renderDashboard, renderJournal, renderTrades } from './views.js';
+import { SessionWizard } from './wizard.js';
+import { getDayReview, saveDayReview } from './trades.js';
 
 const KIND_LABEL = { entry: 'Entry', exit: 'Exit', note: 'Note' };
 
@@ -19,12 +22,87 @@ let recorder = null;
 let elapsedTimer = null;
 let liveMarkers = [];
 
+const wizard = new SessionWizard({
+  getPois: async () => settings.pois,
+  onDone: () => refreshAll(),
+});
+
 const review = new ReviewView({
   getSettings: () => settings,
   setSettings: (patch) => commitSettings(patch),
-  onChanged: () => { renderLibrary(); renderStorage(); },
-  onClose: () => { renderLibrary(); renderStorage(); },
+  onChanged: () => refreshAll(),
+  onClose: () => showView(currentView === 'review' ? 'recordings' : currentView),
 });
+
+// ─────────────────────────── navigation ───────────────────────────
+
+const VIEWS = [
+  { id: 'dashboard', label: 'Overview', icon: '◎' },
+  { id: 'journal', label: 'Journal', icon: '▤' },
+  { id: 'trades', label: 'Trades', icon: '⇅' },
+  { id: 'recordings', label: 'Recordings', icon: '▶' },
+  { id: 'settings', label: 'Settings', icon: '⚙' },
+];
+
+let currentView = 'dashboard';
+
+function renderNav() {
+  const nav = clear($('#sidenav'));
+  for (const view of VIEWS) {
+    nav.append(el('button', {
+      class: `nav-item${view.id === currentView ? ' is-active' : ''}`,
+      type: 'button',
+      dataset: { view: view.id },
+      onclick: () => showView(view.id),
+    },
+      el('span', { class: 'nav-icon', 'aria-hidden': 'true' }, view.icon),
+      el('span', { class: 'nav-label' }, view.label),
+    ));
+  }
+}
+
+async function showView(id) {
+  // Leaving review releases the video's object URL; a session blob can be over
+  // a gigabyte and holding it pins that memory.
+  if (!$('#view-review').hidden && id !== 'review') review.close();
+
+  currentView = id;
+  for (const view of VIEWS) $(`#view-${view.id}`).hidden = view.id !== id;
+  renderNav();
+  await refreshView(id);
+}
+
+async function refreshView(id = currentView) {
+  if (id === 'dashboard') {
+    await renderDashboard({
+      rangeId: settings.range,
+      onRangeChange: (range) => { commitSettings({ range }); refreshView('dashboard'); },
+    });
+  } else if (id === 'journal') {
+    await renderJournal({
+      onOpenSession: (sessionId) => openRecording(sessionId),
+      onEditDay: (day) => editDayNote(day),
+    });
+  } else if (id === 'trades') {
+    await renderTrades({
+      onEdit: (trade) => wizard.open(null, { editTrade: trade }),
+      onChanged: () => refreshAll(),
+    });
+  } else if (id === 'recordings') {
+    await renderLibrary();
+  }
+}
+
+/** Anything that changes trades changes several pages at once. */
+async function refreshAll() {
+  await refreshView(currentView);
+  await renderStorage();
+}
+
+function openRecording(sessionId) {
+  for (const view of VIEWS) $(`#view-${view.id}`).hidden = true;
+  review.open(sessionId);
+}
 
 // ─────────────────────────── recording ───────────────────────────
 
@@ -83,12 +161,15 @@ function startRecording() {
     showAlert(`Recorder error: ${err?.message || err}`, 'warn');
   });
 
-  recorder.on('stop', () => {
+  recorder.on('stop', (session) => {
     window.desktop?.setRecordingState(false);
     setRecordingUi(false);
     stopElapsedTimer();
-    renderLibrary();
-    renderStorage();
+    refreshAll();
+
+    // Ask now, while you still remember why you did what you did. A day later
+    // the reasons have already been rewritten by the outcome.
+    if (session) wizard.open(session);
   });
 
   // Not awaited: the gesture must reach getDisplayMedia synchronously.
@@ -209,6 +290,7 @@ function onKeyDown(e) {
 // ─────────────────────────── recording UI ───────────────────────────
 
 function setRecordingUi(isRecording) {
+  $('#live-markers').hidden = !isRecording;
   const btn = $('#btn-record');
   btn.dataset.state = isRecording ? 'recording' : 'idle';
   $('#btn-record-label').textContent = isRecording ? 'Stop recording' : 'Start recording';
@@ -374,6 +456,7 @@ function renderSettings() {
     `About ${formatBytes(perHour)} per hour — roughly ${formatBytes(perHour * 2)} for a two-hour session.`;
 
   renderHotkeys();
+  renderPois();
 }
 
 function commitSettings(patch) {
@@ -387,12 +470,6 @@ function commitSettings(patch) {
 }
 
 function wireSettings() {
-  $('#nav-settings').addEventListener('click', (e) => {
-    const panel = $('#settings-panel');
-    panel.hidden = !panel.hidden;
-    e.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
-  });
-
   $('#set-preroll').addEventListener('change', (e) => {
     commitSettings({ preRollMs: Math.max(0, Number(e.target.value) || 0) * 1000 });
   });
@@ -461,6 +538,62 @@ async function ensurePersistentStorage() {
     : 'Not granted. The browser may evict recordings under storage pressure.';
 }
 
+// ─────────────────────────── setups (POIs) ───────────────────────────
+
+function renderPois() {
+  const host = clear($('#poi-tags'));
+
+  if (!settings.pois.length) {
+    host.append(el('p', { class: 'muted' },
+      'No setups yet. Add the reasons you actually take trades — they become the choices on the '
+      + 'trade form, and the Trades page scores each one.'));
+    return;
+  }
+
+  for (const poi of settings.pois) {
+    host.append(el('span', { class: 'tag tag-removable' }, poi,
+      el('button', {
+        class: 'tag-x', type: 'button', 'aria-label': `Remove ${poi}`,
+        onclick: () => {
+          // Trades already tagged keep the tag; removing it only stops it being
+          // offered, so history is never rewritten.
+          commitSettings({ pois: settings.pois.filter((p) => p !== poi) });
+          renderPois();
+        },
+      }, '×'),
+    ));
+  }
+}
+
+function wirePois() {
+  $('#poi-add-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const input = $('#poi-input');
+    const value = input.value.trim();
+    if (!value) return;
+
+    if (settings.pois.some((p) => p.toLowerCase() === value.toLowerCase())) {
+      input.value = '';
+      return;
+    }
+    commitSettings({ pois: [...settings.pois, value] });
+    input.value = '';
+    renderPois();
+  });
+}
+
+/** The journal's "add note" opens the same day review the wizard uses. */
+async function editDayNote(day) {
+  const existing = await getDayReview(day.date);
+  const note = window.prompt(
+    `Notes for ${day.date}`,
+    existing?.note || '',
+  );
+  if (note === null) return;
+  await saveDayReview({ date: day.date, rating: existing?.rating || 0, note });
+  await refreshView('journal');
+}
+
 // ─────────────────────────── banners ───────────────────────────
 
 let alertTimer = null;
@@ -493,7 +626,10 @@ function renderSupport() {
 
 async function boot() {
   wireSettings();
+  wirePois();
   renderSettings();
+  renderNav();
+  $('#btn-add-trade').addEventListener('click', () => wizard.open(null));
   $('#btn-record').addEventListener('click', onRecordClick);
   window.addEventListener('keydown', onKeyDown);
 
@@ -531,7 +667,7 @@ async function boot() {
 
   await ensurePersistentStorage();
 
-  await renderLibrary();
+  await showView('dashboard');
   await renderStorage();
   setInterval(renderStorage, 15_000);
 }
@@ -547,6 +683,10 @@ window.tradeJournal = {
   get sessionId() { return recorder?.sessionId || null; },
   get markers() { return [...liveMarkers]; },
   review,
+  wizard,
+  showView,
+  refreshAll,
+  get view() { return currentView; },
   get settings() { return { ...settings }; },
 };
 

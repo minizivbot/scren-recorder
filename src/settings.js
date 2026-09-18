@@ -28,6 +28,14 @@ export const DEFAULTS = {
     exit: 'x',
     note: 'n',
   },
+
+  // The trader's own reasons for taking a trade. Seeded with common ones so
+  // the first trade form is not empty, but entirely theirs to replace — the
+  // Trades page scores whatever is in this list.
+  pois: ['FVG', 'Order block', 'Liquidity sweep', 'Break of structure', 'Retest'],
+
+  // Which dashboard range was last looked at.
+  range: '30',
 };
 
 export const PRESETS = [
@@ -44,9 +52,11 @@ export function loadSettings() {
       ...DEFAULTS,
       ...stored,
       hotkeys: { ...DEFAULTS.hotkeys, ...(stored.hotkeys || {}) },
+      // An emptied list stays empty; only a missing one falls back.
+      pois: Array.isArray(stored.pois) ? stored.pois : [...DEFAULTS.pois],
     };
   } catch {
-    return { ...DEFAULTS, hotkeys: { ...DEFAULTS.hotkeys } };
+    return { ...DEFAULTS, hotkeys: { ...DEFAULTS.hotkeys }, pois: [...DEFAULTS.pois] };
   }
 }
 

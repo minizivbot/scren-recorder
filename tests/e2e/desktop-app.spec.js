@@ -25,13 +25,13 @@ test.describe('desktop app', () => {
   test.afterAll(async () => { await app?.close(); });
 
   test('opens a real window running the same recorder', async () => {
-    expect(await page.title()).toContain('Session Recorder');
+    expect(await page.title()).toContain('Trade Journal');
     await expect(page.locator('#btn-record')).toBeVisible();
 
     // The desktop flag reaches the page, so browser-only setup copy is hidden.
     expect(await page.evaluate(() => window.desktop?.isDesktop)).toBe(true);
     await expect(page.locator('body')).toHaveAttribute('data-desktop', 'true');
-    await expect(page.locator('.browser-only')).toBeHidden();
+    await expect(page.locator('.browser-only').first()).toBeHidden();
 
     // It is the same core, not a second implementation.
     const core = await page.evaluate(async () => {

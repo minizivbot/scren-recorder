@@ -52,6 +52,7 @@ export class ReviewView {
     });
 
     $('#timeline-track').addEventListener('click', (e) => {
+      if (this.durationMs === 0) return;
       if (e.target.closest('.tl-marker')) return; // marker clicks seek with pre-roll
       const rect = e.currentTarget.getBoundingClientRect();
       const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
@@ -71,7 +72,6 @@ export class ReviewView {
     if (!this.session) return;
 
     this.root.hidden = false;
-    $('#view-record').hidden = true;
     window.scrollTo(0, 0);
 
     this._renderHeader();
@@ -81,6 +81,9 @@ export class ReviewView {
     const overlay = $('#video-overlay');
     overlay.hidden = false;
     overlay.textContent = 'Loading recording…';
+    // Until the file is loaded the playhead reads 0, so marking or seeking now
+    // would land at the start of the session rather than where you meant.
+    this._setTransportEnabled(false);
 
     const blob = await getSessionBlob(sessionId);
     if (!blob) {
@@ -102,6 +105,7 @@ export class ReviewView {
     );
 
     overlay.hidden = true;
+    this._setTransportEnabled(true);
     $('#time-total').textContent = formatDuration(this.durationMs);
     // Only the rail: it needs durationMs to place markers. Re-rendering the
     // list here would destroy an editor opened while the video was loading,
@@ -122,7 +126,6 @@ export class ReviewView {
     this.session = null;
     this.editingId = null;
     this.root.hidden = true;
-    $('#view-record').hidden = false;
     this.onClose?.();
   }
 
@@ -140,6 +143,13 @@ export class ReviewView {
     if (s.status === SESSION_STATUS.INTERRUPTED) bits.push('interrupted — recovered');
     if (s.storageError?.kind === 'quota') bits.push('stopped: storage full');
     $('#review-sub').textContent = bits.join(' · ');
+  }
+
+  /** The transport is inert until there is something to scrub. */
+  _setTransportEnabled(enabled) {
+    const ids = ['#btn-play', '#btn-back60', '#btn-back10', '#btn-fwd10', '#btn-fwd60', '#btn-mark-here'];
+    for (const id of ids) $(id).disabled = !enabled;
+    $('#timeline-track').dataset.ready = String(enabled);
   }
 
   _renderPreRollReadout() {
@@ -315,7 +325,7 @@ export class ReviewView {
 
   /** The practical fallback for every marker missed live. */
   async _markAtPlayhead() {
-    if (!this.session) return;
+    if (!this.session || this.durationMs === 0) return;
     const offsetMs = Math.round(this.video.currentTime * 1000);
     const marker = await addMarkerToSession(this.session.id, { offsetMs, kind: 'note' });
 

@@ -43,7 +43,8 @@ function createWindow() {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#0e1116',
-    title: 'Trade Journal — Session Recorder',
+    title: 'Trade Journal',
+    icon: path.join(ROOT, 'build', 'icon.png'),
     show: false,
     webPreferences: {
       preload: path.join(ROOT, 'electron', 'preload.cjs'),
@@ -173,6 +174,9 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(() => {
+    // Without this Windows groups the window under "electron" in the taskbar
+    // and shows the wrong icon on the jump list.
+    if (process.platform === 'win32') app.setAppUserModelId('com.tradejournal.recorder');
     createWindow();
     registerShortcuts();
 

@@ -20,7 +20,7 @@
  */
 
 const DB_NAME = 'trade-journal-recordings';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 /** A session with no chunk written for this long is not being recorded anymore. */
 const STALE_AFTER_MS = 15_000;
@@ -638,7 +638,7 @@ function sessionRange(sessionId) {
   return IDBKeyRange.bound(`${sessionId}:`, `${sessionId}:\uffff`);
 }
 
-function put(db, store, value) {
+export function put(db, store, value) {
   return new Promise((resolve, reject) => {
     let tx;
     try {
@@ -671,6 +671,16 @@ export function openDb() {
       if (!db.objectStoreNames.contains('chunks')) {
         const s = db.createObjectStore('chunks', { keyPath: 'key' });
         s.createIndex('bySession', 'sessionId');
+      }
+      // v2: the journal. Trades are the authoritative record the dashboard
+      // reads; nothing here is derived from a recording or from a marker.
+      if (!db.objectStoreNames.contains('trades')) {
+        const s = db.createObjectStore('trades', { keyPath: 'id' });
+        s.createIndex('byDate', 'date');
+        s.createIndex('bySession', 'sessionId');
+      }
+      if (!db.objectStoreNames.contains('days')) {
+        db.createObjectStore('days', { keyPath: 'date' });
       }
     };
     req.onsuccess = () => {

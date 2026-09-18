@@ -6,7 +6,7 @@
  * the bytes recorded — so this records continuously and compares heap growth
  * against the volume written, rather than trying to run for two real hours.
  */
-import { test, expect, waitForRecording } from './fixtures.js';
+import { test, expect, waitForRecording, stopAndSkipReview, gotoView } from './fixtures.js';
 
 const RECORD_MS = 75_000;
 
@@ -19,9 +19,10 @@ test('heap stays flat while the recording grows', async ({ page }) => {
   await page.evaluate(() => { window.__capture.noise = true; });
 
   // A high bitrate makes the data volume meaningful within the test's runtime.
-  await page.click('#nav-settings');
+  await gotoView(page, 'settings');
   await page.fill('#set-bitrate', '8000');
   await page.dispatchEvent('#set-bitrate', 'change');
+  await gotoView(page, 'dashboard');
 
   await page.click('#btn-record');
   await waitForRecording(page);
@@ -44,7 +45,7 @@ test('heap stays flat while the recording grows', async ({ page }) => {
   const finalBytes = await bytesWritten();
 
   const sessionId = await page.evaluate(() => window.tradeJournal.sessionId);
-  await page.click('#btn-record');
+  await stopAndSkipReview(page);
   await expect(page.locator('#record-status')).toHaveAttribute('data-state', 'idle');
 
   const grownBytes = finalBytes.bytes - baselineBytes.bytes;

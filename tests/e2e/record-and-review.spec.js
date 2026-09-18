@@ -5,7 +5,7 @@
  * The frames carry an encoded timestamp, so "the seek landed correctly" is
  * proved from the decoded picture, not from the value of currentTime.
  */
-import { test, expect, decodeFrameSecond, saveSessionToDisk, probeWithFfmpeg, waitForRecording } from './fixtures.js';
+import { test, expect, decodeFrameSecond, saveSessionToDisk, probeWithFfmpeg, waitForRecording, stopAndSkipReview, gotoView } from './fixtures.js';
 import { parseWebmFile } from './webm.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -58,9 +58,10 @@ test('records a session, marks it live, and reviews it with pre-roll', async ({ 
 
   // ── 3. stop → the session appears in the library ──────────────────────
   const sessionId = await page.evaluate(() => window.tradeJournal.sessionId);
-  await page.click('#btn-record');
+  await stopAndSkipReview(page);
   await expect(page.locator('#record-status')).toHaveAttribute('data-state', 'idle');
 
+  await gotoView(page, 'recordings');
   const row = page.locator(`.session[data-session-id="${sessionId}"]`);
   await expect(row).toBeVisible();
   await expect(row).toContainText('3');

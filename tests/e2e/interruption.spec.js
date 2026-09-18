@@ -3,7 +3,7 @@
  * timeslice and leave a playable session, and ending the capture from the
  * browser's own "Stop sharing" bar must finalize rather than corrupt.
  */
-import { test, expect, saveSessionToDisk, waitForRecording } from './fixtures.js';
+import { test, expect, saveSessionToDisk, waitForRecording, gotoView } from './fixtures.js';
 import { parseWebmFile } from './webm.js';
 import path from 'node:path';
 
@@ -35,6 +35,7 @@ test('a refresh mid-session leaves a recoverable, playable partial session', asy
   await page.waitForTimeout(16_000);
   await page.reload();
 
+  await gotoView(page, 'recordings');
   const row = page.locator(`.session[data-session-id="${sessionId}"]`);
   await expect(row).toBeVisible();
   await expect(row.locator('.badge-interrupted')).toBeVisible();
@@ -85,6 +86,10 @@ test('ending the capture from the browser bar finalizes the session', async ({ p
   await expect(page.locator('#record-status')).toHaveAttribute('data-state', 'idle');
   await expect(page.locator('#alert-banner')).toContainText('stopped from the browser bar');
 
+  // Ending this way still offers the review, same as pressing stop.
+  await expect(page.locator('.wizard')).toBeVisible();
+  await page.getByRole('button', { name: 'Skip' }).click();
+
   const session = await page.evaluate(async (id) => {
     const { getSession } = await import('/src/session-recorder.js');
     return getSession(id);
@@ -104,6 +109,7 @@ test('ending the capture from the browser bar finalizes the session', async ({ p
   expect(webm.keyframes).toBeGreaterThan(0);
 
   // It appears in the library and plays back.
+  await gotoView(page, 'recordings');
   const row = page.locator(`.session[data-session-id="${sessionId}"]`);
   await expect(row).toBeVisible();
   await row.click();

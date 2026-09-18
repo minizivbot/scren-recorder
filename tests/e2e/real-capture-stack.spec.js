@@ -15,6 +15,7 @@
  * verifies the app handles a genuine capture-stack track.
  */
 import { test, expect } from '@playwright/test';
+import { stopAndSkipReview, gotoView } from './fixtures.js';
 
 test.use({
   launchOptions: {
@@ -59,7 +60,7 @@ test('records and reviews a stream from the real capture pipeline', async ({ pag
   await page.waitForTimeout(4000);
 
   const sessionId = await page.evaluate(() => window.tradeJournal.sessionId);
-  await page.click('#btn-record');
+  await stopAndSkipReview(page);
   await expect(page.locator('#record-status')).toHaveAttribute('data-state', 'idle');
 
   const session = await page.evaluate(async (id) => {
@@ -76,6 +77,7 @@ test('records and reviews a stream from the real capture pipeline', async ({ pag
   expect(session.video.height).toBeGreaterThan(0);
 
   // And it plays back and seeks.
+  await gotoView(page, 'recordings');
   await page.locator(`.session[data-session-id="${sessionId}"]`).click();
   await expect(page.locator('#video-overlay')).toBeHidden();
 

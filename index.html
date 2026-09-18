@@ -3,51 +3,54 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Trade Journal · Session Recorder</title>
+  <title>Trade Journal</title>
   <link rel="stylesheet" href="src/styles.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='%23e5484d'/></svg>">
+  <link rel="icon" href="build/icon.png">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
       <span class="brand-dot" aria-hidden="true"></span>
-      <h1>Session Recorder</h1>
+      <h1>Trade Journal</h1>
     </div>
     <div class="topbar-right">
-      <div class="storage" id="storage-meter" title="Origin storage used by all recordings">
-        <div class="storage-bar"><div class="storage-fill" id="storage-fill"></div></div>
-        <span class="storage-text" id="storage-text">storage —</span>
+      <div class="record-status" id="record-status" data-state="idle">
+        <span class="status-light" aria-hidden="true"></span>
+        <span class="status-text" id="status-text">Not recording</span>
+        <span class="elapsed" id="elapsed" hidden>00:00</span>
       </div>
-      <button class="btn btn-ghost" id="nav-settings" type="button" aria-expanded="false">Settings</button>
+      <div class="storage" id="storage-meter" title="Storage used by recordings">
+        <div class="storage-bar"><div class="storage-fill" id="storage-fill"></div></div>
+        <span class="storage-text" id="storage-text">—</span>
+      </div>
     </div>
   </header>
 
   <div class="banner banner-error" id="support-banner" hidden></div>
   <div class="banner banner-warn" id="alert-banner" hidden></div>
 
-  <main>
-    <!-- ───────────────────────── record view ───────────────────────── -->
-    <section id="view-record">
-      <div class="panel record-panel">
-        <div class="record-main">
+  <div class="layout" id="app-layout">
+    <main class="content">
+      <!-- ─────────────────────── dashboard ─────────────────────── -->
+      <section id="view-dashboard" class="view">
+        <div class="view-head">
+          <h2>Overview</h2>
+          <div class="range-tabs" id="range-tabs"></div>
+        </div>
+
+        <div class="stat-grid" id="stat-grid"></div>
+
+        <div class="start-panel">
           <button class="btn btn-record" id="btn-record" type="button">
             <span class="rec-icon" aria-hidden="true"></span>
             <span id="btn-record-label">Start recording</span>
           </button>
-
-          <div class="record-status" id="record-status" data-state="idle">
-            <span class="status-light" aria-hidden="true"></span>
-            <span class="status-text" id="status-text">Not recording</span>
-            <span class="elapsed" id="elapsed" hidden>00:00</span>
-          </div>
+          <p class="start-hint" id="record-hint">
+            One continuous recording for the whole session. Mark the moments as they happen —
+            nothing is ever cut, so you can always scrub back for more context.
+          </p>
+          <div class="hotkeys" id="hotkeys-strip"></div>
         </div>
-
-        <p class="record-hint" id="record-hint">
-          One continuous recording for the whole session. Mark the moments as they happen —
-          nothing is ever cut, so you can always scrub back for more context.
-        </p>
-
-        <div class="hotkeys" id="hotkeys-strip"></div>
 
         <div class="notice notice-focus">
           <div class="bridge-state" id="bridge-state" data-connected="false">
@@ -55,100 +58,141 @@
             <strong id="bridge-label">Global hotkeys: checking…</strong>
           </div>
           <p id="bridge-help">
-            Marking works while Tradovate has focus — browser or desktop app — as long as the
-            local server is running and a hotkey tool is pointed at it.
+            Marking works while Tradovate has focus — browser or desktop app.
           </p>
-
           <details class="browser-only">
-            <summary>Set up global hotkeys (one time, ~2 minutes)</summary>
+            <summary>Set up global hotkeys in a browser (one time)</summary>
             <ol class="setup-steps">
+              <li>Install <a href="https://www.autohotkey.com" target="_blank" rel="noopener">AutoHotkey v2</a>.</li>
+              <li>Double-click <code>tools/trade-journal-hotkeys.ahk</code>.</li>
               <li>
-                Install <a href="https://www.autohotkey.com" target="_blank" rel="noopener">AutoHotkey v2</a>.
-              </li>
-              <li>
-                Double-click <code>tools/trade-journal-hotkeys.ahk</code> in the project folder.
-                A green “H” appears in your system tray.
-              </li>
-              <li>
-                That is it. The defaults are
-                <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> entry,
+                Defaults: <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> entry,
                 <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd> exit,
-                <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> note. Edit the top of the file to change them.
+                <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> note.
               </li>
             </ol>
-            <p class="muted">
-              Anything that can send an HTTP request works, not just AutoHotkey — a Stream Deck, a
-              macro keyboard, a foot pedal. They all post to
-              <code>http://localhost:5173/bridge/mark</code>.
-            </p>
+            <p class="muted">The desktop app needs none of this — it registers them with Windows itself.</p>
           </details>
-
           <details>
-            <summary>Why the in-page keys alone are not enough</summary>
+            <summary>Why starting still has to be a click</summary>
             <p>
-              A web page only receives <code>keydown</code> while its tab is focused, and there is no
-              browser API that changes that. The moment you click into Tradovate, the keys below stop
-              reaching this tab. The bridge exists because the fix has to live outside the browser.
-            </p>
-            <p>
-              <strong>Starting a recording still has to be a click in this tab.</strong>
-              <code>getDisplayMedia</code> requires a real user gesture in the page, so no hotkey can
-              begin a session. Stopping one remotely is fine.
+              <code>getDisplayMedia</code> requires a real user gesture before the browser will hand
+              over the screen, so no hotkey can begin a session. Stopping one is fine.
             </p>
           </details>
-
-          <p class="fallback-note">
-            Any marker you miss can be added afterwards by scrubbing to the moment in review and
-            marking there.
-          </p>
         </div>
 
-        <div class="live-markers">
-          <div class="live-markers-head">
-            <h2>Markers this session</h2>
+        <div class="live-markers" id="live-markers" hidden>
+          <div class="section-head">
+            <h3>Markers this session</h3>
             <span class="count" id="live-marker-count">0</span>
           </div>
           <ol class="marker-list" id="live-marker-list"></ol>
           <p class="empty" id="live-marker-empty">No markers yet.</p>
         </div>
-      </div>
 
-      <!-- ───────────────────────── settings ───────────────────────── -->
-      <div class="panel settings-panel" id="settings-panel" hidden>
-        <h2>Settings</h2>
+        <div class="section-head"><h3>Recent days</h3></div>
+        <div id="recent-days"></div>
+      </section>
 
-        <div class="setting">
-          <label for="set-preroll">Review pre-roll</label>
-          <div class="setting-control">
-            <input type="number" id="set-preroll" min="0" max="600" step="5">
-            <span class="unit">seconds before each marker</span>
-          </div>
+      <!-- ─────────────────────── journal ─────────────────────── -->
+      <section id="view-journal" class="view" hidden>
+        <div class="view-head">
+          <h2>Journal</h2>
+          <span class="count" id="journal-count">0</span>
+        </div>
+        <div id="journal-list" class="journal-list"></div>
+        <p class="empty" id="journal-empty">
+          Nothing logged yet. Record a session, or add a trade from the Trades page.
+        </p>
+      </section>
+
+      <!-- ─────────────────────── trades ─────────────────────── -->
+      <section id="view-trades" class="view" hidden>
+        <div class="view-head">
+          <h2>Trades</h2>
+          <span class="count" id="trades-count">0</span>
+          <button class="btn btn-primary" id="btn-add-trade" type="button">Add trade</button>
+        </div>
+        <div class="table-wrap">
+          <table class="trades-table" id="trades-table"></table>
+        </div>
+        <p class="empty" id="trades-empty">No trades logged yet.</p>
+
+        <div class="section-head"><h3>By setup</h3></div>
+        <div class="table-wrap">
+          <table class="trades-table" id="poi-table"></table>
+        </div>
+        <p class="empty" id="poi-empty">
+          Tag trades with your own setups to find out which ones are worth taking.
+        </p>
+      </section>
+
+      <!-- ─────────────────────── recordings ─────────────────────── -->
+      <section id="view-recordings" class="view" hidden>
+        <div class="view-head">
+          <h2>Recordings</h2>
+          <span class="count" id="session-count">0</span>
+        </div>
+        <div id="session-list" class="session-list"></div>
+        <p class="empty" id="session-empty">No sessions recorded yet.</p>
+      </section>
+
+      <!-- ─────────────────────── settings ─────────────────────── -->
+      <section id="view-settings" class="view" hidden>
+        <div class="view-head"><h2>Settings</h2></div>
+
+        <div class="panel">
+          <h3>Your setups</h3>
           <p class="setting-help">
-            Clicking a marker seeks here, not to the marker itself. The setup is the part worth
-            reviewing; the entry is just where it ended up.
+            The reasons you take a trade — points of interest, patterns, whatever you call them.
+            They become the choices on the trade form, and the Trades page scores each one so you
+            can see which are actually worth taking.
           </p>
+          <div class="poi-editor">
+            <div class="poi-tags" id="poi-tags"></div>
+            <form class="poi-add" id="poi-add-form">
+              <input type="text" id="poi-input" placeholder="e.g. FVG, Order block, Liquidity sweep" maxlength="40">
+              <button class="btn btn-primary" type="submit">Add</button>
+            </form>
+          </div>
         </div>
 
-        <div class="setting">
-          <label for="set-preset">Capture quality</label>
-          <div class="setting-control">
-            <select id="set-preset"></select>
+        <div class="panel">
+          <h3>Review</h3>
+          <div class="setting">
+            <label for="set-preroll">Pre-roll</label>
+            <div class="setting-control">
+              <input type="number" id="set-preroll" min="0" max="600" step="5">
+              <span class="unit">seconds before each marker</span>
+            </div>
+            <p class="setting-help">
+              Clicking a marker seeks here, not to the marker itself. The setup is the part worth
+              reviewing; the entry is just where it ended up.
+            </p>
           </div>
-          <div class="setting-grid">
-            <label>Width <input type="number" id="set-width" min="320" step="16"></label>
-            <label>Height <input type="number" id="set-height" min="240" step="16"></label>
-            <label>Frame rate <input type="number" id="set-fps" min="1" max="60"></label>
-            <label>Bitrate (kbps) <input type="number" id="set-bitrate" min="200" step="100"></label>
-          </div>
-          <p class="setting-help" id="size-estimate"></p>
-          <p class="setting-help">
-            If size needs to come down, reduce bitrate before resolution — a smaller frame makes chart
-            text unreadable, which defeats the point. Frame rate is already low because charts barely move.
-          </p>
         </div>
 
-        <div class="setting">
-          <label>Marking hotkeys</label>
+        <div class="panel">
+          <h3>Capture</h3>
+          <div class="setting">
+            <div class="setting-control"><select id="set-preset"></select></div>
+            <div class="setting-grid">
+              <label>Width <input type="number" id="set-width" min="320" step="16"></label>
+              <label>Height <input type="number" id="set-height" min="240" step="16"></label>
+              <label>Frame rate <input type="number" id="set-fps" min="1" max="60"></label>
+              <label>Bitrate (kbps) <input type="number" id="set-bitrate" min="200" step="100"></label>
+            </div>
+            <p class="setting-help" id="size-estimate"></p>
+            <p class="setting-help">
+              If size needs to come down, reduce bitrate before resolution — a smaller frame makes
+              chart text unreadable, which defeats the point.
+            </p>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Hotkeys</h3>
           <div class="setting-grid">
             <label>Entry <input type="text" id="set-key-entry" maxlength="1"></label>
             <label>Exit <input type="text" id="set-key-exit" maxlength="1"></label>
@@ -156,106 +200,89 @@
           </div>
         </div>
 
-        <div class="setting">
-          <label>Storage</label>
+        <div class="panel">
+          <h3>Storage</h3>
           <div class="setting-control">
             <button class="btn btn-ghost" id="btn-persist" type="button">Request persistent storage</button>
             <span id="persist-state" class="muted"></span>
           </div>
           <p class="setting-help">
-            Without this the browser may evict recordings under storage pressure. Worth granting before
-            a long session.
+            Without this the browser may evict recordings under storage pressure.
           </p>
         </div>
-      </div>
+      </section>
 
-      <!-- ───────────────────────── library ───────────────────────── -->
-      <div class="panel library-panel">
-        <div class="library-head">
-          <h2>Sessions</h2>
-          <span class="count" id="session-count">0</span>
-        </div>
-        <div class="notice notice-scope">
-          <strong>This is a review layer, not a statistics layer.</strong>
-          <p>
-            No win rate, profit factor, expectancy or P&amp;L is shown here, and none is inferred from a
-            recording or from anything typed into a marker — a video is not a queryable trade record.
-            Marker details are labels for finding footage.
-          </p>
-          <p class="muted">Performance statistics: <strong>no trade data source connected.</strong></p>
-        </div>
-        <div id="session-list" class="session-list"></div>
-        <p class="empty" id="session-empty">No sessions recorded yet.</p>
-      </div>
-    </section>
-
-    <!-- ───────────────────────── review view ───────────────────────── -->
-    <section id="view-review" hidden>
-      <div class="review-head">
-        <button class="btn btn-ghost" id="btn-back" type="button">← All sessions</button>
-        <div class="review-title">
-          <h2 id="review-title">Session</h2>
-          <span class="review-sub" id="review-sub"></span>
-        </div>
-        <div class="review-actions">
-          <button class="btn btn-danger btn-ghost" id="btn-delete-session" type="button">Delete session</button>
-        </div>
-      </div>
-
-      <div class="review-body">
-        <div class="player-col">
-          <div class="video-wrap">
-            <video id="player" playsinline preload="auto"></video>
-            <div class="video-overlay" id="video-overlay" hidden></div>
+      <!-- ─────────────────────── review ─────────────────────── -->
+      <section id="view-review" class="view" hidden>
+        <div class="review-head">
+          <button class="btn btn-ghost" id="btn-back" type="button">← Recordings</button>
+          <div class="review-title">
+            <h2 id="review-title">Session</h2>
+            <span class="review-sub" id="review-sub"></span>
           </div>
+          <div class="review-actions">
+            <button class="btn btn-danger btn-ghost" id="btn-delete-session" type="button">Delete</button>
+          </div>
+        </div>
 
-          <div class="timeline" id="timeline">
-            <div class="timeline-track" id="timeline-track">
-              <div class="timeline-played" id="timeline-played"></div>
-              <div class="timeline-markers" id="timeline-markers"></div>
+        <div class="review-body">
+          <div class="player-col">
+            <div class="video-wrap">
+              <video id="player" playsinline preload="auto"></video>
+              <div class="video-overlay" id="video-overlay" hidden></div>
             </div>
+
+            <div class="timeline" id="timeline">
+              <div class="timeline-track" id="timeline-track">
+                <div class="timeline-played" id="timeline-played"></div>
+                <div class="timeline-markers" id="timeline-markers"></div>
+              </div>
+            </div>
+
+            <div class="transport">
+              <button class="btn btn-icon" id="btn-play" type="button" aria-label="Play">▶</button>
+              <button class="btn btn-ghost" id="btn-back60" type="button">−60s</button>
+              <button class="btn btn-ghost" id="btn-back10" type="button">−10s</button>
+              <button class="btn btn-ghost" id="btn-fwd10" type="button">+10s</button>
+              <button class="btn btn-ghost" id="btn-fwd60" type="button">+60s</button>
+              <span class="time-readout"><span id="time-current">00:00</span> / <span id="time-total">00:00</span></span>
+              <label class="rate">
+                Speed
+                <select id="playback-rate">
+                  <option value="0.5">0.5×</option>
+                  <option value="1" selected>1×</option>
+                  <option value="1.5">1.5×</option>
+                  <option value="2">2×</option>
+                  <option value="4">4×</option>
+                </select>
+              </label>
+              <button class="btn btn-primary" id="btn-mark-here" type="button">Mark at playhead</button>
+            </div>
+
+            <p class="review-hint">
+              <label for="review-preroll">Clicking a marker lands</label>
+              <input type="number" id="review-preroll" min="0" max="600" step="5" aria-label="Pre-roll seconds">
+              <span>seconds before it, so you see the setup forming rather than the fill.</span>
+            </p>
           </div>
 
-          <div class="transport">
-            <button class="btn btn-icon" id="btn-play" type="button" aria-label="Play">▶</button>
-            <button class="btn btn-ghost" id="btn-back60" type="button">−60s</button>
-            <button class="btn btn-ghost" id="btn-back10" type="button">−10s</button>
-            <button class="btn btn-ghost" id="btn-fwd10" type="button">+10s</button>
-            <button class="btn btn-ghost" id="btn-fwd60" type="button">+60s</button>
-            <span class="time-readout"><span id="time-current">00:00</span> / <span id="time-total">00:00</span></span>
-            <label class="rate">
-              Speed
-              <select id="playback-rate">
-                <option value="0.5">0.5×</option>
-                <option value="1" selected>1×</option>
-                <option value="1.5">1.5×</option>
-                <option value="2">2×</option>
-                <option value="4">4×</option>
-              </select>
-            </label>
-            <button class="btn btn-primary" id="btn-mark-here" type="button">Mark at playhead</button>
-          </div>
-
-          <p class="review-hint">
-            <label for="review-preroll">Clicking a marker lands</label>
-            <input type="number" id="review-preroll" min="0" max="600" step="5" aria-label="Pre-roll seconds">
-            <span>seconds before it, so you see the setup forming rather than the fill.</span>
-          </p>
+          <aside class="marker-col">
+            <div class="section-head">
+              <h3>Markers</h3>
+              <span class="count" id="review-marker-count">0</span>
+            </div>
+            <ol class="marker-list marker-list-review" id="review-marker-list"></ol>
+            <p class="empty" id="review-marker-empty">
+              No markers. Scrub to a moment and use “Mark at playhead” to add one.
+            </p>
+          </aside>
         </div>
+      </section>
+    </main>
 
-        <aside class="marker-col">
-          <div class="marker-col-head">
-            <h3>Markers</h3>
-            <span class="count" id="review-marker-count">0</span>
-          </div>
-          <ol class="marker-list marker-list-review" id="review-marker-list"></ol>
-          <p class="empty" id="review-marker-empty">
-            No markers. Scrub to a moment and use “Mark at playhead” to add one.
-          </p>
-        </aside>
-      </div>
-    </section>
-  </main>
+    <!-- navigation sits on the right -->
+    <nav class="sidenav" id="sidenav" aria-label="Sections"></nav>
+  </div>
 
   <script type="module" src="src/app.js"></script>
 </body>
