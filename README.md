@@ -22,6 +22,23 @@ Where to get it:
 It is portable: it runs from wherever you put it and installs nothing.
 Recordings live in the app's own storage, not in the folder.
 
+### "Windows protected your PC"
+
+Expected on first run, and not a sign of anything wrong with the file.
+SmartScreen checks two things: whether the executable carries a paid code
+signing certificate, and whether enough people have already run it. A freshly
+built, unsigned app fails both.
+
+Click **More info**, then **Run anyway**. It only asks once.
+
+Alternatively, close the dialog, right-click the .exe → **Properties** → tick
+**Unblock** at the bottom → **OK**.
+
+Making the warning go away permanently needs an Authenticode certificate
+(roughly $300-500/year), which is hard to justify for a tool only you run. If
+you ever want one, it slots into the `win` section of the electron-builder
+config in package.json.
+
 ### Or run it in a browser
 
 The browser version is still fully supported and is what the test suite mostly
