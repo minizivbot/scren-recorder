@@ -96,10 +96,6 @@ jobs:
             || { echo "latest.yml does not carry this build's version"; exit 1; }
           echo "Update feed OK: $named at 1.0.${{ github.run_number }}"
 
-      # Assets are added, never removed, so a rename leaves the old installer
-      # sitting next to the new one. Four installers on a download page, two of
-      # them stale and unable to update themselves, is how a download starts
-      # looking untrustworthy. Anything not built by this run goes.
       - uses: actions/upload-artifact@v4
         with:
           name: TradeJournal
@@ -160,27 +156,40 @@ jobs:
             [docs/SIGNING.md](https://github.com/minizivbot/scren-recorder/blob/main/docs/SIGNING.md)
             lists what actually stops it, cheapest first.
 
+      # Assets are added, never replaced, so a rename leaves the old installer
+      # beside the new one. Four installers on a download page, half of them
+      # stale and unable to update themselves, is how a download starts looking
+      # untrustworthy. The logic lives in a script with tests, because the bash
+      # version of this step once deleted the entire release.
       - name: Remove installers left over from older builds
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          node scripts/prune-release-assets.mjs "${{ github.repository }}" latest \
+            TradeJournal-Setup.exe \
+            TradeJournal-Setup.exe.blockmap \
+            TradeJournal-Portable.exe \
+            latest.yml
+
+      # Whatever the steps above did, the download has to work when this job
+      # ends. This is the last word, and it fails the build if it does not.
+      - name: Verify the download page still works
+        shell: bash
+        run: |
           set -euo pipefail
-          keep="TradeJournal-Setup.exe TradeJournal-Setup.exe.blockmap TradeJournal-Portable.exe latest.yml"
-          api="https://api.github.com/repos/${{ github.repository }}"
-
-          assets=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$api/releases/tags/latest" \
-            | python -c "import json,sys; [print(a['id'], a['name']) for a in json.load(sys.stdin)['assets']]")
-
-          while read -r id name; do
-            [ -n "$name" ] || continue
-            if ! grep -qw -- "$name" <<<"$keep"; then
-              echo "removing stale asset: $name"
-              curl -fsSL -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$api/releases/assets/$id"
-            fi
-          done <<<"$assets"
-
-          echo "kept: $keep"
+          base="https://github.com/${{ github.repository }}/releases/download/latest"
+          for f in TradeJournal-Setup.exe latest.yml; do
+            code=$(curl -sL -o /dev/null -w '%{http_code}' -r 0-63 "$base/$f")
+            echo "$f -> HTTP $code"
+            case "$code" in
+              200|206) ;;
+              *) echo "$f is not downloadable"; exit 1 ;;
+            esac
+          done
+          curl -sL "$base/latest.yml" | grep -q "1.0.${{ github.run_number }}" \
+            || { echo "the published feed is not from this build"; exit 1; }
+          echo "Download page OK."
 
       - name: Report the build size
         shell: bash
