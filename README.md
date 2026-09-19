@@ -45,8 +45,11 @@ things. Results are self-reported: this is your journal, not a broker statement.
 - **Overview** — net R, win rate, expectancy, profit factor, average win and
   loss, max drawdown and current streak, over 7/30/90 days or all time. The
   record button sits right underneath.
-- **Journal** — every day you traded or recorded, with its R, its rating, your
-  notes, each trade, and a link straight to that day's footage.
+- **Journal** — the month as a grid: one box per day, green with the amount
+  when the day ended up, red when it ended down, with weekly and monthly
+  totals. A day that was recorded but never logged shows a film marker and no
+  colour — a recording is not a result. Click a day to open it, or switch to
+  the list for the notes and trades in full.
 - **Trades** — the full table, editable, plus a breakdown by your own setups so
   you can see which ones are worth taking. Tags with too few trades behind them
   say so rather than pretending to be evidence.
@@ -57,34 +60,55 @@ things. Results are self-reported: this is your journal, not a broker statement.
 
 ## Run it as an app (recommended)
 
-Download **TradeJournalRecorder.exe** and double-click it. No terminal, no
-server to leave running, no browser tab to keep open, and nothing else to
-install — global hotkeys are built in.
+**[Download TradeJournal-Setup.exe](https://github.com/minizivbot/scren-recorder/releases/tag/latest)**
+and double-click it. No terminal, no server to leave running, no browser tab
+to keep open, and nothing else to install — global hotkeys are built in.
 
-Where to get it:
+The installer runs straight through: no options to pick, installs for the
+current user, makes a desktop and Start menu shortcut, and opens the app when
+it finishes.
 
-- **GitHub → Actions tab** → newest "Build Windows app" run → **Artifacts** →
-  `TradeJournalRecorder`. A fresh build is produced on every push.
-- Or build it yourself on Windows: `npm install` then `npm run dist:win`.
-  The .exe lands in `dist/`.
+You download it **once**. From then on the app updates itself — see below.
 
-It is portable: it runs from wherever you put it and installs nothing.
-Recordings live in the app's own storage, not in the folder.
+There is also a **TradeJournal-Portable.exe** on the same page: a single file
+that installs nothing and runs from wherever you put it. It cannot update
+itself, so it has to be re-downloaded by hand. Prefer the installer.
 
-The installer runs straight through — no options to pick. It installs for the
-current user and opens the app when it finishes.
+To build it yourself on Windows: `npm install`, then `npm run dist:win`. The
+.exe lands in `dist/`.
+
+### It updates itself
+
+The app checks for a new version about once an hour, downloads it in the
+background, and installs it the next time you close the app. Settings shows
+the version it is on, what it is doing, and a **Check now** button.
+
+**It will not install over a live recording.** The installer has to quit the
+app to replace the binary, and a trading morning cannot be re-recorded, so a
+downloaded update waits until you stop — even if you press the button
+yourself.
 
 ### "Windows protected your PC"
 
-Click **More info**, then **Run anyway**. It only asks once per machine.
+**The button you need is hidden.** The dialog shows only *Don't run*:
+
+1. Click **More info** — the small link under the message
+2. Click **Run anyway**, which appears after you do
+
+Or, before opening it: right-click the file → **Properties** → tick
+**Unblock** → **OK**.
+
+**Once per machine, not once per version.** Updates do not arrive through a
+browser, and SmartScreen does not check those — so this is a one-time cost of
+the first install even though the app keeps changing.
 
 Windows shows this for any program not signed with a paid certificate,
 whatever is inside it. It cannot be turned off from the code — no build flag,
 no installer format, no zip. [docs/SIGNING.md](docs/SIGNING.md) lists what
-actually works, including a **free** route: Microsoft will clear a specific
-file if you submit it, usually within a few days.
+actually works, cheapest first, including a free route: publishing through the
+Microsoft Store, where Microsoft signs the app and the warning never appears.
 
-The build signs itself automatically once a certificate exists — add two
+The build signs itself automatically once a certificate exists — add the
 repository secrets and nothing else changes.
 
 ### Or run it in a browser
