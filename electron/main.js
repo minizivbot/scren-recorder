@@ -19,6 +19,7 @@
 import { app, BrowserWindow, globalShortcut, desktopCapturer, ipcMain, shell, dialog } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -153,10 +154,127 @@ ipcMain.handle('app-info', () => ({
   recordingsPath: app.getPath('userData'),
 }));
 
-ipcMain.handle('reveal-recordings', () => {
-  const dir = app.getPath('userData');
+// ── recordings on disk ──────────────────────────────────────────────────────
+//
+// In the browser, chunks live in IndexedDB because there is nowhere else to put
+// them. A desktop app has a filesystem, so recordings go to a real folder you
+// choose: visible in Explorer, backup-able, movable to another drive, and not
+// subject to a browser storage quota at all.
+
+const SETTINGS_FILE = () => path.join(app.getPath('userData'), 'recordings-path.json');
+
+function defaultRecordingsDir() {
+  return path.join(app.getPath('videos'), 'Trade Journal');
+}
+
+function readRecordingsDir() {
+  // An explicit override, for a portable install on a memory stick, a machine
+  // where the videos drive is not the user profile drive, and for tests.
+  if (process.env.TRADE_JOURNAL_RECORDINGS_DIR) {
+    return process.env.TRADE_JOURNAL_RECORDINGS_DIR;
+  }
+  try {
+    const raw = fs.readFileSync(SETTINGS_FILE(), 'utf8');
+    const dir = JSON.parse(raw).dir;
+    if (dir && typeof dir === 'string') return dir;
+  } catch { /* first run, or the file was removed */ }
+  return defaultRecordingsDir();
+}
+
+function writeRecordingsDir(dir) {
+  fs.mkdirSync(path.dirname(SETTINGS_FILE()), { recursive: true });
+  fs.writeFileSync(SETTINGS_FILE(), JSON.stringify({ dir }, null, 2));
+}
+
+/** Open file handles, one per recording in progress. */
+const writers = new Map();
+
+ipcMain.handle('recordings-dir', () => ({
+  dir: readRecordingsDir(),
+  isDefault: readRecordingsDir() === defaultRecordingsDir(),
+}));
+
+ipcMain.handle('choose-recordings-dir', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Where should recordings be saved?',
+    defaultPath: readRecordingsDir(),
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (result.canceled || !result.filePaths[0]) return { dir: readRecordingsDir(), changed: false };
+
+  // Existing recordings are deliberately left where they are. Moving gigabytes
+  // behind a settings click is not something to do without being asked.
+  writeRecordingsDir(result.filePaths[0]);
+  return { dir: result.filePaths[0], changed: true };
+});
+
+ipcMain.handle('reveal-recordings', async () => {
+  const dir = readRecordingsDir();
+  await fsp.mkdir(dir, { recursive: true });
   shell.openPath(dir);
   return dir;
+});
+
+ipcMain.handle('recording-open', async (_event, sessionId) => {
+  const dir = readRecordingsDir();
+  await fsp.mkdir(dir, { recursive: true });
+
+  const file = path.join(dir, `${sessionId}.webm`);
+  const handle = await fsp.open(file, 'w');
+  writers.set(sessionId, handle);
+  return file;
+});
+
+/**
+ * Appends one timeslice.
+ *
+ * Written and flushed as it arrives, exactly like the IndexedDB path: a crash
+ * costs the timeslice being buffered, never the session.
+ */
+ipcMain.handle('recording-write', async (_event, sessionId, chunk) => {
+  const handle = writers.get(sessionId);
+  if (!handle) throw new Error(`No open recording for ${sessionId}`);
+  const { bytesWritten } = await handle.write(Buffer.from(chunk));
+  return bytesWritten;
+});
+
+ipcMain.handle('recording-close', async (_event, sessionId) => {
+  const handle = writers.get(sessionId);
+  if (!handle) return null;
+  await handle.close();
+  writers.delete(sessionId);
+
+  const file = path.join(readRecordingsDir(), `${sessionId}.webm`);
+  const stat = await fsp.stat(file).catch(() => null);
+  return { file, bytes: stat?.size ?? 0 };
+});
+
+/** Hands the renderer a file:// URL the video element can play directly. */
+ipcMain.handle('recording-url', async (_event, sessionId) => {
+  const file = path.join(readRecordingsDir(), `${sessionId}.webm`);
+  const stat = await fsp.stat(file).catch(() => null);
+  if (!stat) return null;
+  return { url: `file://${file.split(path.sep).join('/')}`, bytes: stat.size };
+});
+
+ipcMain.handle('recording-delete', async (_event, sessionId) => {
+  const file = path.join(readRecordingsDir(), `${sessionId}.webm`);
+  const stat = await fsp.stat(file).catch(() => null);
+  await fsp.rm(file, { force: true });
+  return { bytes: stat?.size ?? 0 };
+});
+
+/** Total size of everything in the recordings folder. */
+ipcMain.handle('recordings-usage', async () => {
+  const dir = readRecordingsDir();
+  const names = await fsp.readdir(dir).catch(() => []);
+  let bytes = 0;
+  for (const name of names) {
+    if (!name.endsWith('.webm')) continue;
+    const stat = await fsp.stat(path.join(dir, name)).catch(() => null);
+    bytes += stat?.size ?? 0;
+  }
+  return { dir, bytes, files: names.filter((n) => n.endsWith('.webm')).length };
 });
 
 // ── lifecycle ───────────────────────────────────────────────────────────────
@@ -212,7 +330,14 @@ ipcMain.on('recording-state', (_event, isRecording) => {
   global.__isRecording = !!isRecording;
 });
 
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', async () => {
+  globalShortcut.unregisterAll();
+  // Flush whatever was open, so an interrupted session is still a valid prefix.
+  for (const [id, handle] of writers) {
+    await handle.close().catch(() => {});
+    writers.delete(id);
+  }
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

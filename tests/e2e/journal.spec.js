@@ -31,9 +31,11 @@ test('stopping a session asks how the day went, then for the trades', async ({ p
 
   // ── step 3: the details ───────────────────────────────────────────────
   await expect(page.locator('.trade-form')).toBeVisible();
+  await page.locator('.outcome-btn[data-outcome="win"]').click();
   await page.fill('input[name="symbol"]', 'mnq');
   await page.selectOption('select[name="direction"]', 'short');
   await page.fill('input[name="r"]', '2.5');
+  await page.fill('input[name="pnl"]', '500');
   await page.locator('.tag-btn', { hasText: 'FVG' }).click();
   await page.fill('#trade-note', 'swept the high then rejected');
   await page.getByRole('button', { name: 'Save trade' }).click();
@@ -42,8 +44,12 @@ test('stopping a session asks how the day went, then for the trades', async ({ p
   await expect(page.locator('.wizard-head h2')).toHaveText('Trade saved');
   await page.click('#add-another');
 
+  // A loss is chosen, and the plain positive number typed below becomes
+  // negative on its own.
+  await page.locator('.outcome-btn[data-outcome="loss"]').click();
   await page.fill('input[name="symbol"]', 'MES');
-  await page.fill('input[name="r"]', '-1');
+  await page.fill('input[name="r"]', '1');
+  await page.fill('input[name="pnl"]', '200');
   await page.getByRole('button', { name: 'Save trade' }).click();
   await page.click('#wizard-finish');
 
@@ -58,25 +64,33 @@ test('stopping a session asks how the day went, then for the trades', async ({ p
   expect(trades).toHaveLength(2);
   const mnq = trades.find((t) => t.symbol === 'MNQ');
   expect(mnq).toMatchObject({
-    symbol: 'MNQ', direction: 'short', r: 2.5, outcome: 'win', note: 'swept the high then rejected',
+    symbol: 'MNQ', direction: 'short', r: 2.5, pnl: 500, outcome: 'win',
+    note: 'swept the high then rejected',
   });
   expect(mnq.pois).toEqual(['FVG']);
   // Linked to the recording so you can jump to the footage, not derived from it.
   expect(mnq.sessionId).toMatch(/^sess_/);
 
   const mes = trades.find((t) => t.symbol === 'MES');
-  expect(mes).toMatchObject({ r: -1, outcome: 'loss' });
+  // Typed as 1 and 200, stored as a loss without anyone typing a minus sign.
+  expect(mes).toMatchObject({ r: -1, pnl: -200, outcome: 'loss' });
 
   // ── the dashboard reflects it ─────────────────────────────────────────
   await page.click('[data-view="dashboard"]');
-  const tiles = page.locator('.stat-tile');
-  await expect(tiles.filter({ hasText: 'Net R' })).toContainText('+1.50R');
-  await expect(tiles.filter({ hasText: 'Win rate' })).toContainText('50%');
+  // Matched on the tile's own label: the expectancy explainer text mentions
+  // "win rate" too, and a loose filter picks up both tiles.
+  const tile = (label) => page.locator('.stat-tile')
+    .filter({ has: page.locator('.stat-tile-label > span', { hasText: new RegExp(`^${label}$`) }) });
+
+  await expect(tile('Net R')).toContainText('+1.50R');
+  await expect(tile('Net P&L')).toContainText('+\$300');
+  await expect(tile('Win rate')).toContainText('50%');
   await expect(page.locator('.stat-note')).toContainText('From your own entries');
 
   // ── and the journal shows the day, its rating and its note ────────────
   await page.click('[data-view="journal"]');
   const day = page.locator('.journal-day').first();
+  await expect(day).toContainText('+$300');
   await expect(day).toContainText('+1.50R');
   await expect(day).toContainText('Patient early, forced the last one.');
   await expect(day.locator('.star.is-on')).toHaveCount(4);
@@ -137,23 +151,26 @@ test('trades can be added, edited and deleted without a recording', async ({ pag
   await page.click('#btn-add-trade');
   await page.fill('input[name="symbol"]', 'MNQ');
   await page.fill('input[name="r"]', '3');
+  await page.fill('input[name="pnl"]', '600');
   await page.getByRole('button', { name: 'Save trade' }).click();
   await page.click('#wizard-finish');
 
   await expect(page.locator('#trades-table tbody tr')).toHaveCount(1);
   await expect(page.locator('.cell-r').first()).toHaveText('+3.00R');
 
-  // Edit it down to a loss and check the row follows.
+  // Switch it to a loss and check both amounts follow, without retyping them.
   await page.getByRole('button', { name: 'Edit' }).first().click();
-  await page.fill('input[name="r"]', '-1');
+  await page.locator('.outcome-btn[data-outcome="loss"]').click();
   await page.getByRole('button', { name: 'Save' }).click();
-  await expect(page.locator('.cell-r').first()).toHaveText('-1.00R');
+  await expect(page.locator('.cell-r').first()).toHaveText('-3.00R');
 
   const trade = await page.evaluate(async () => {
     const { listTrades } = await import('/src/trades.js');
     return (await listTrades())[0];
   });
   expect(trade.outcome).toBe('loss');
+  expect(trade.r).toBe(-3);
+  expect(trade.pnl).toBe(-600);
   // Logged without a session: a trade does not require a recording.
   expect(trade.sessionId).toBeNull();
 
@@ -218,5 +235,6 @@ test('statistics come only from trades, never from recordings or markers', async
 
   const body = await page.locator('#view-dashboard').innerText();
   expect(body).not.toMatch(/\d+(\.\d+)?R/); // no R figure anywhere
-  expect(body).not.toMatch(/\d+%/);         // no win rate
+  expect(body).not.toMatch(/\$\d/);          // no money either
+  expect(body).not.toMatch(/\d+%/);          // no win rate
 });

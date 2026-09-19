@@ -6,11 +6,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeStats, equityCurve, maxDrawdown, streaks, byDay, byPoi, bySymbol,
-  formatR, formatPercent, EMPTY,
+  formatR, formatMoney, formatPercent, EMPTY,
 } from '../../src/stats.js';
-import { makeTrade, dayKey } from '../../src/trades.js';
+import { makeTrade, dayKey, applyOutcome } from '../../src/trades.js';
 
-/** Terse trade builder: t(2) is a 2R win, t(-1) a 1R loss. */
+/**
+ * Terse trade builder: t(2) is a 2R win, t(-1) a 1R loss.
+ * The sign picks the outcome here, the way a legacy record would.
+ */
 const t = (r, over = {}) => makeTrade({ r, date: '2026-01-05', ...over });
 
 describe('computeStats', () => {
@@ -111,11 +114,14 @@ describe('equity curve and drawdown', () => {
       t(-2, { date: '2026-01-03' }),
       t(2, { date: '2026-01-04' }),
     ];
-    expect(maxDrawdown(trades)).toBe(4);
+    expect(maxDrawdown(trades).r).toBe(4);
   });
 
-  it('is zero when the record only ever rose', () => {
-    expect(maxDrawdown([t(1), t(2)])).toBe(0);
+  it('is zero when the record only ever rose, and never negative zero', () => {
+    const none = maxDrawdown([t(1), t(2)]);
+    expect(none.r).toBe(0);
+    // -0 would render as "-0.00R", which reads as a loss that never happened.
+    expect(Object.is(none.r, -0)).toBe(false);
     expect(maxDrawdown([])).toBeNull();
   });
 });
@@ -194,6 +200,19 @@ describe('formatting', () => {
     expect(formatR(null)).toBe('—');
   });
 
+  it('never prints a negative zero', () => {
+    // "-0.00R" on the dashboard reads as a loss that never happened.
+    expect(formatR(-0)).toBe('0.00R');
+    expect(formatMoney(-0)).toBe('$0');
+  });
+
+  it('formats money without inventing cents', () => {
+    expect(formatMoney(1250)).toBe('+$1,250');
+    expect(formatMoney(-312.5)).toBe('-$312.50');
+    expect(formatMoney(0)).toBe('$0');
+    expect(formatMoney(null)).toBe('—');
+  });
+
   it('shows a dash for an unknown percentage, never 0%', () => {
     expect(formatPercent(62.5)).toBe('62.5%');
     expect(formatPercent(null)).toBe('—');
@@ -222,28 +241,98 @@ describe('trade records', () => {
   });
 });
 
-describe('editing a trade', () => {
-  it('re-derives the outcome from the new R', () => {
+describe('outcome and sign', () => {
+  it('signs the amount from the chosen outcome, so a plain number is enough', () => {
+    // You pick "loss" and type 100. Making you remember a minus sign is how a
+    // journal ends up with a loss recorded as a win.
+    expect(applyOutcome('loss', 100)).toBe(-100);
+    expect(applyOutcome('win', 100)).toBe(100);
+    expect(applyOutcome('breakeven', 100)).toBe(0);
+
+    // A minus already typed is not doubled back into a win.
+    expect(applyOutcome('loss', -100)).toBe(-100);
+    expect(applyOutcome('win', -100)).toBe(100);
+  });
+
+  it('keeps R and money on the same side as the outcome', () => {
+    const trade = makeTrade({ outcome: 'loss', r: 1, pnl: 250 });
+    expect(trade.outcome).toBe('loss');
+    expect(trade.r).toBe(-1);
+    expect(trade.pnl).toBe(-250);
+
+    const be = makeTrade({ outcome: 'breakeven', r: 2, pnl: 400 });
+    expect(be.r).toBe(0);
+    expect(be.pnl).toBe(0);
+  });
+
+  it('falls back to reading the sign for a record saved before outcomes were explicit', () => {
     // Regression: the outcome used to be overridable, so editing a +3R win down
     // to a loss left it stored as a win. The row showed the loss while the win
     // rate still counted it as a win.
-    const original = makeTrade({ r: 3 });
-    expect(original.outcome).toBe('win');
-
-    const edited = makeTrade({ ...original, r: -1 });
-    expect(edited.outcome).toBe('loss');
-
-    // A stale outcome travelling in the data cannot override it either.
-    const roundTripped = makeTrade({ ...original, outcome: 'win', r: 0 });
-    expect(roundTripped.outcome).toBe('breakeven');
+    expect(makeTrade({ r: 3 }).outcome).toBe('win');
+    expect(makeTrade({ r: -1 }).outcome).toBe('loss');
+    expect(makeTrade({ r: 0 }).outcome).toBe('breakeven');
   });
 
-  it('keeps stats consistent with the R actually stored', () => {
+  it('flips both amounts when the outcome is changed on an edit', () => {
+    // Regression: editing a +3R win into a loss once left it stored as a win,
+    // so the row showed the loss while the win rate counted a win.
+    const win = makeTrade({ outcome: 'win', r: 3, pnl: 600 });
+    const flipped = makeTrade({ ...win, outcome: 'loss' });
+
+    expect(flipped.r).toBe(-3);
+    expect(flipped.pnl).toBe(-600);
+    expect(computeStats([flipped]).losses).toBe(1);
+  });
+
+  it('keeps stats consistent with what is actually stored', () => {
     const win = makeTrade({ r: 2 });
-    const flipped = makeTrade({ ...win, r: -1 });
+    const flipped = makeTrade({ ...win, outcome: 'loss', r: 1 });
     const s = computeStats([flipped]);
     expect(s.losses).toBe(1);
     expect(s.wins).toBe(0);
     expect(s.totalR).toBe(-1);
+  });
+});
+
+describe('money alongside R', () => {
+  const m = (outcome, r, pnl, over = {}) =>
+    makeTrade({ outcome, r, pnl, date: '2026-01-05', ...over });
+
+  it('totals money and R together', () => {
+    const s = computeStats([
+      m('win', 2, 400), m('loss', 1, 200), m('win', 3, 600), m('breakeven', 0, 0),
+    ]);
+    expect(s.totalR).toBe(4);
+    expect(s.totalPnl).toBe(800);
+  });
+
+  it('averages wins and losses in money as positive magnitudes', () => {
+    const s = computeStats([m('win', 2, 400), m('win', 1, 200), m('loss', 1, 300)]);
+    expect(s.avgWinPnl).toBe(300);
+    expect(s.avgLossPnl).toBe(300);
+  });
+
+  it('gives expectancy in money as well as R', () => {
+    // What taking one more trade is worth, on this record.
+    const s = computeStats([m('win', 3, 300), m('loss', 1, 100), m('loss', 1, 100)]);
+    expect(s.expectancy).toBeCloseTo(0.33, 2);
+    expect(s.expectancyPnl).toBeCloseTo(33.33, 1);
+  });
+
+  it('tracks drawdown in money too', () => {
+    const dd = maxDrawdown([
+      m('win', 3, 300, { date: '2026-01-01' }),
+      m('loss', 2, 200, { date: '2026-01-02' }),
+      m('loss', 2, 200, { date: '2026-01-03' }),
+    ]);
+    expect(dd.r).toBe(4);
+    expect(dd.pnl).toBe(400);
+  });
+
+  it('treats a trade with no money entered as zero, not as missing R', () => {
+    const s = computeStats([m('win', 2, 0)]);
+    expect(s.totalR).toBe(2);
+    expect(s.totalPnl).toBe(0);
   });
 });

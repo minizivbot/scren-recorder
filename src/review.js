@@ -3,7 +3,7 @@
  * the ones that were missed live by scrubbing to the moment and marking there.
  */
 import {
-  getSession, getSessionBlob, deleteSession, seekTargetMs,
+  getSession, getSessionMediaUrl, deleteSession, seekTargetMs,
   addMarkerToSession, updateSessionMarker, removeSessionMarker,
   SESSION_STATUS, formatBytes,
 } from './session-recorder.js';
@@ -20,7 +20,7 @@ export class ReviewView {
     this.setSettings = setSettings;
 
     this.session = null;
-    this.objectUrl = null;
+    this.revokeUrl = null;
     this.durationMs = 0;
     this.editingId = null;
 
@@ -85,8 +85,8 @@ export class ReviewView {
     // would land at the start of the session rather than where you meant.
     this._setTransportEnabled(false);
 
-    const blob = await getSessionBlob(sessionId);
-    if (!blob) {
+    const media = await getSessionMediaUrl(sessionId);
+    if (!media) {
       overlay.textContent =
         'This session has no stored video. It was interrupted before the first timeslice was written.';
       this.durationMs = 0;
@@ -95,10 +95,10 @@ export class ReviewView {
 
     // The stored duration comes from the chunks on disk, so it is right even
     // for an interrupted session the browser cannot measure.
-    const { url, durationSeconds } = await loadSessionIntoVideo(this.video, blob, {
+    const { durationSeconds } = await loadSessionIntoVideo(this.video, media.url, {
       fallbackMs: this.session.durationMs || 0,
     });
-    this.objectUrl = url;
+    this.revokeUrl = media.revoke;
     this.durationMs = Math.max(
       Math.round(durationSeconds * 1000) || 0,
       this.session.durationMs || 0,
@@ -118,11 +118,10 @@ export class ReviewView {
     this.video.pause();
     this.video.removeAttribute('src');
     this.video.load();
-    if (this.objectUrl) {
-      // A session blob can be well over a gigabyte. Leaking the URL pins it.
-      URL.revokeObjectURL(this.objectUrl);
-      this.objectUrl = null;
-    }
+    // A blob URL pins a recording that can be well over a gigabyte. A file://
+    // URL has nothing to release.
+    this.revokeUrl?.();
+    this.revokeUrl = null;
     this.session = null;
     this.editingId = null;
     this.root.hidden = true;

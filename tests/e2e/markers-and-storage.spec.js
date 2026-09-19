@@ -44,7 +44,7 @@ test('markers can be edited and new ones added by scrubbing', async ({ page }) =
   // ── add a marker by scrubbing, the fallback for anything missed live ──
   // The transport stays disabled until the recording is loaded, so that a mark
   // cannot land at 0 while the playhead has not caught up yet.
-  await expect(page.locator('#btn-mark-here')).toBeEnabled();
+  await expect(page.locator('#timeline-track')).toHaveAttribute('data-ready', 'true');
   await page.evaluate(() => { document.getElementById('player').currentTime = 5; });
   await page.waitForFunction(() => !document.getElementById('player').seeking);
   await page.click('#btn-mark-here');

@@ -1,17 +1,25 @@
 :root {
-  --bg: #0e1116;
-  --panel: #161b22;
-  --panel-2: #1c232c;
-  --line: #2a323d;
-  --text: #e6edf3;
-  --muted: #8b949e;
-  --accent: #3b82f6;
-  --rec: #e5484d;
-  --entry: #22c55e;
-  --exit: #f59e0b;
-  --note: #8b5cf6;
-  --radius: 10px;
+  --bg: #0b0e14;
+  --panel: #12161f;
+  --panel-2: #191f2b;
+  --line: #242c3a;
+  --line-soft: #1b2230;
+  --text: #e8eef6;
+  --muted: #8794a8;
+  --accent: #4b8cf7;
+  --rec: #f2555a;
+  --entry: #2fd07a;
+  --exit: #f7a63b;
+  --note: #9b7cf6;
+  --radius: 12px;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.22);
 }
+
+::selection { background: #2a4b80; }
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; border: 3px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: #33405480; }
+::-webkit-scrollbar-track { background: transparent; }
 
 * { box-sizing: border-box; }
 
@@ -23,7 +31,9 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 h1 { font-size: 16px; margin: 0; }
@@ -35,8 +45,9 @@ code { background: #0b0e13; padding: 1px 5px; border-radius: 4px; font-size: 12p
 /* ── top bar ─────────────────────────────────────────────── */
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 20px; border-bottom: 1px solid var(--line);
-  background: var(--panel); position: sticky; top: 0; z-index: 10;
+  padding: 13px 22px; border-bottom: 1px solid var(--line-soft);
+  background: rgba(18, 22, 31, .88); backdrop-filter: blur(12px);
+  position: sticky; top: 0; z-index: 10;
 }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--rec); }
@@ -52,9 +63,11 @@ code { background: #0b0e13; padding: 1px 5px; border-radius: 4px; font-size: 12p
 /* ── layout ──────────────────────────────────────────────── */
 main { max-width: 1180px; margin: 0 auto; padding: 20px; }
 .panel {
-  background: var(--panel); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: 20px; margin-bottom: 20px;
+  background: var(--panel); border: 1px solid var(--line-soft);
+  border-radius: var(--radius); padding: 22px; margin-bottom: 18px;
+  box-shadow: var(--shadow);
 }
+.panel h3 { margin: 0 0 4px; }
 
 /* ── banners ─────────────────────────────────────────────── */
 .banner { padding: 12px 20px; font-size: 13px; border-bottom: 1px solid var(--line); }
@@ -272,6 +285,14 @@ video { width: 100%; height: 100%; display: block; background: #000; object-fit:
 
 /* The AutoHotkey setup is browser-only; in the app the OS holds the shortcuts. */
 body[data-desktop="true"] .browser-only { display: none !important; }
+body:not([data-desktop="true"]) .desktop-only { display: none !important; }
+
+.folder-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.folder-path {
+  flex: 1; min-width: 220px; padding: 9px 12px; font-size: 12.5px;
+  background: #0a0d14; border: 1px solid var(--line); border-radius: 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* Screen picker, standing in for Chrome's own share dialog. */
 .picker-overlay {
@@ -352,21 +373,72 @@ body[data-desktop="true"] .browser-only { display: none !important; }
 .range-tab.is-active { background: var(--panel-2); border-color: var(--line); color: var(--text); }
 
 /* ── stat tiles ──────────────────────────────────────────── */
-.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
-.stat-tile {
-  background: var(--panel); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: 15px 16px;
-  display: flex; flex-direction: column; gap: 3px;
+.stat-grid {
+  display: grid;
+  /* Six columns: the two headline tiles take half the row each, and the six
+     supporting tiles fill the next row exactly — no orphan tile on its own. */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
 }
-.stat-tile-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-.stat-tile-value { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.stat-tile-sub { font-size: 11px; color: var(--muted); }
+.stat-tile {
+  position: relative;
+  background: var(--panel); border: 1px solid var(--line-soft);
+  border-radius: var(--radius); padding: 15px 17px;
+  display: flex; flex-direction: column; gap: 4px;
+  box-shadow: var(--shadow);
+}
+.stat-tile-label {
+  display: flex; align-items: baseline; gap: 6px; min-height: 15px; padding-right: 18px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); font-weight: 600; white-space: nowrap;
+}
+.stat-tile-label > span { overflow: hidden; text-overflow: ellipsis; }
+.stat-tile-value {
+  font-size: 25px; font-weight: 650; font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em; line-height: 1.15;
+}
+.stat-tile-sub { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .stat-tile[data-tone="up"] .stat-tile-value { color: var(--entry); }
 .stat-tile[data-tone="down"] .stat-tile-value { color: var(--rec); }
+
+/* The two headline numbers get a row of their own. */
+.stat-hero { grid-column: span 3; padding: 20px 22px; }
+.stat-hero .stat-tile-value { font-size: 36px; }
+
+.stat-pair-values {
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums;
+  letter-spacing: -.02em;
+}
+.pair-up { color: var(--entry); }
+.pair-down { color: var(--rec); }
+.pair-sep { color: var(--line); font-weight: 400; }
+.stat-hero::after {
+  content: ''; position: absolute; inset: 0; border-radius: var(--radius);
+  pointer-events: none; border: 1px solid transparent;
+}
+.stat-hero[data-tone="up"]::after { border-color: #2fd07a26; }
+.stat-hero[data-tone="down"]::after { border-color: #f2555a26; }
+
+/* A term nobody defined is a term nobody reads. Pinned to the corner so it
+   never competes with the label for width. */
+.explain {
+  position: absolute; top: 12px; right: 12px;
+  width: 16px; height: 16px; padding: 0; flex-shrink: 0;
+  border-radius: 50%; border: 1px solid var(--line);
+  background: transparent; color: var(--muted);
+  font: 600 10px/1 ui-sans-serif, system-ui, sans-serif; cursor: pointer;
+}
+.explain:hover { border-color: var(--accent); color: var(--accent); }
+.stat-explain {
+  display: none; margin: 8px 0 0; font-size: 11.5px; line-height: 1.5;
+  color: var(--muted); border-top: 1px solid var(--line-soft); padding-top: 8px;
+}
+.stat-tile.is-explained .stat-explain { display: block; }
 .stat-note { grid-column: 1 / -1; margin: 2px 0 0; font-size: 11px; color: var(--muted); }
 .stat-empty {
-  grid-column: 1 / -1; background: var(--panel); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: 22px;
+  grid-column: 1 / -1; background: var(--panel); border: 1px solid var(--line-soft);
+  border-radius: var(--radius); padding: 24px; box-shadow: var(--shadow);
 }
 .stat-empty p { margin: 6px 0 0; color: var(--muted); max-width: 72ch; font-size: 13px; }
 
@@ -507,6 +579,15 @@ body[data-desktop="true"] .browser-only { display: none !important; }
 .choice span { font-size: 12px; }
 .poi-row { display: flex; flex-wrap: wrap; gap: 2px; }
 
+@media (max-width: 1150px) {
+  .stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .stat-hero { grid-column: span 2; }
+}
+@media (max-width: 720px) {
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat-hero { grid-column: span 2; }
+}
+
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; }
   .sidenav { position: static; flex-direction: row; overflow-x: auto; }
@@ -516,3 +597,51 @@ body[data-desktop="true"] .browser-only { display: none !important; }
 
 /* The timeline is inert until a recording is loaded into it. */
 .timeline-track[data-ready="false"] { cursor: default; opacity: .55; }
+
+
+/* ── outcome picker ──────────────────────────────────────── */
+.outcome-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.outcome-btn {
+  display: flex; flex-direction: column; gap: 3px; align-items: flex-start;
+  padding: 13px 14px; border-radius: 10px; cursor: pointer; font: inherit;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--muted);
+  text-align: left;
+}
+.outcome-btn strong { font-size: 14px; color: var(--text); }
+.outcome-btn span { font-size: 11px; line-height: 1.35; }
+.outcome-btn:hover { border-color: #3a4658; }
+.outcome-btn.is-on[data-outcome="win"] { border-color: var(--entry); background: #2fd07a14; }
+.outcome-btn.is-on[data-outcome="win"] strong { color: var(--entry); }
+.outcome-btn.is-on[data-outcome="loss"] { border-color: var(--rec); background: #f2555a14; }
+.outcome-btn.is-on[data-outcome="loss"] strong { color: var(--rec); }
+.outcome-btn.is-on[data-outcome="breakeven"] { border-color: var(--muted); background: #8794a814; }
+
+/* Amounts are meaningless on a scratch. */
+.trade-form.is-breakeven .amounts,
+.trade-form.is-breakeven #amount-note { display: none; }
+.amounts input { font-variant-numeric: tabular-nums; }
+
+.day-totals { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
+.day-sub-r { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.jt-pnl { font-variant-numeric: tabular-nums; min-width: 74px; font-weight: 600; }
+.jt-pnl[data-tone="up"] { color: var(--entry); }
+.jt-pnl[data-tone="down"] { color: var(--rec); }
+
+/* ── buttons and inputs, tightened ───────────────────────── */
+.btn { transition: background .12s, border-color .12s, transform .04s; }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn-record {
+  box-shadow: 0 2px 10px rgba(242, 85, 90, .26);
+  border-radius: 10px;
+}
+.btn-record[data-state="recording"] { box-shadow: none; }
+input, select, textarea { transition: border-color .12s, box-shadow .12s; }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(75, 140, 247, .16);
+}
+.nav-item { transition: background .12s, color .12s; }
+.sidenav { box-shadow: var(--shadow); }
+.journal-day, .trades-table, .table-wrap { box-shadow: var(--shadow); }
+.table-wrap { border-color: var(--line-soft); }
+.trades-table th { background: #141926; }

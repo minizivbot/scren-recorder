@@ -94,7 +94,7 @@ test('records a session, marks it live, and reviews it with pre-roll', async ({ 
   // ── 5. open it and play ───────────────────────────────────────────────
   await row.click();
   await expect(page.locator('#view-review')).toBeVisible();
-  await expect(page.locator('#video-overlay')).toBeHidden();
+  await expect(page.locator('#timeline-track')).toHaveAttribute('data-ready', 'true');
   await expect(page.locator('#review-marker-list li')).toHaveCount(3);
 
   await page.click('#btn-play');

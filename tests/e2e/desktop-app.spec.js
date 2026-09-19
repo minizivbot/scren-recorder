@@ -8,16 +8,31 @@
  */
 import { test, expect, _electron as electron } from '@playwright/test';
 import path from 'node:path';
+import os from 'node:os';
+import fsp from 'node:fs/promises';
+import { parseWebm } from './webm.js';
+
+/**
+ * A clean profile per launch.
+ *
+ * The app keeps its journal in IndexedDB under the user data directory, which
+ * otherwise survives between runs — so a second run starts with the first
+ * run's sessions already in the library and the tests drift.
+ */
+async function launchApp(extraEnv = {}) {
+  const userDataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tj-profile-'));
+  return electron.launch({
+    args: [process.cwd(), '--no-sandbox', `--user-data-dir=${userDataDir}`],
+    env: { ...process.env, DISPLAY: process.env.DISPLAY || ':99', ...extraEnv },
+  });
+}
 
 test.describe('desktop app', () => {
   let app;
   let page;
 
   test.beforeAll(async () => {
-    app = await electron.launch({
-      args: [path.join(process.cwd()), '--no-sandbox'],
-      env: { ...process.env, DISPLAY: process.env.DISPLAY || ':99' },
-    });
+    app = await launchApp();
     page = await app.firstWindow();
     await page.waitForLoadState('domcontentloaded');
   });
@@ -125,14 +140,15 @@ test.describe('desktop app', () => {
     await expect(page.locator('#record-status')).toHaveAttribute('data-state', 'idle');
 
     const session = await page.evaluate(async (id) => {
-      const { getSession, getSessionBlob } = await import('./src/session-recorder.js');
+      const { getSession } = await import('./src/session-recorder.js');
       const s = await getSession(id);
-      const blob = await getSessionBlob(id);
-      return { status: s.status, markers: s.markers.length, bytes: blob?.size ?? 0 };
+      return { status: s.status, markers: s.markers.length, bytes: s.bytes, storage: s.storage?.kind };
     }, sessionId);
 
     expect(session.status).toBe('complete');
     expect(session.markers).toBe(2);
+    // Recorded to a file, and its size comes from the file itself.
+    expect(session.storage).toBe('file');
     expect(session.bytes).toBeGreaterThan(1000);
   });
 
@@ -155,5 +171,108 @@ test.describe('desktop app', () => {
 
     await page.locator('.picker-item').first().click();
     await expect(page.locator('.picker')).toBeHidden();
+  });
+});
+
+/**
+ * Recordings on disk.
+ *
+ * The browser keeps video in IndexedDB because it has nowhere else to put it.
+ * A desktop app has a filesystem, so it writes ordinary .webm files into a
+ * folder the user picks — visible, backup-able, and with no storage quota.
+ */
+test.describe('recordings folder', () => {
+  let app;
+  let page;
+  let dir;
+
+  test.beforeAll(async () => {
+    dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tj-recordings-'));
+
+    // The same override a portable install would use.
+    app = await launchApp({ TRADE_JOURNAL_RECORDINGS_DIR: dir });
+    page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+  });
+
+  test.afterAll(async () => { await app?.close(); });
+
+  test('writes a real .webm file, and plays it back from disk', async () => {
+    // State the premise: if the app is not pointed at this folder, everything
+    // below would fail for a reason that has nothing to do with recording.
+    const configured = await page.evaluate(() => window.desktop.recordings.dir());
+    expect(configured.dir).toBe(dir);
+
+    await page.evaluate(() => {
+      navigator.mediaDevices.getDisplayMedia = async () => {
+        const c = document.createElement('canvas');
+        c.width = 640; c.height = 360;
+        const g = c.getContext('2d');
+        setInterval(() => {
+          g.fillStyle = `hsl(${Date.now() / 20 % 360},70%,50%)`;
+          g.fillRect(0, 0, 640, 360);
+        }, 100);
+        return c.captureStream(10);
+      };
+    });
+
+    await page.click('#btn-record');
+    await page.waitForFunction(() => window.tradeJournal?.state === 'recording');
+    const sessionId = await page.evaluate(() => window.tradeJournal.sessionId);
+
+    await page.waitForTimeout(6000);
+    await page.click('#btn-record');
+    await page.waitForFunction(() => window.tradeJournal?.state === 'idle');
+    await page.getByRole('button', { name: 'Skip' }).click();
+
+    // An ordinary file, where the user can see it.
+    const file = path.join(dir, `${sessionId}.webm`);
+    const stat = await fsp.stat(file);
+    expect(stat.size).toBeGreaterThan(10_000);
+
+    // And it is a structurally valid webm, not a pile of bytes.
+    const webm = parseWebm(await fsp.readFile(file));
+    expect(webm.error).toBeNull();
+    expect(webm.clean).toBe(true);
+    expect(webm.blocks).toBeGreaterThan(30);
+
+    const session = await page.evaluate(async (id) => {
+      const { getSession } = await import('./src/session-recorder.js');
+      return getSession(id);
+    }, sessionId);
+    expect(session.storage.kind).toBe('file');
+    expect(session.bytes).toBe(stat.size);
+
+    // The player opens it straight from disk rather than loading it into memory.
+    await page.click('[data-view="recordings"]');
+    await page.locator(`.session[data-session-id="${sessionId}"]`).click();
+    // The transport unlocks only once the recording is loaded. The overlay
+    // starts hidden, so waiting on it would pass before loading even began.
+    await expect(page.locator('#timeline-track')).toHaveAttribute('data-ready', 'true');
+    expect(await page.evaluate(() => document.getElementById('player').src)).toContain('file://');
+
+    await page.click('#btn-play');
+    await page.waitForFunction(() => document.getElementById('player').currentTime > 0.3);
+  });
+
+  test('deleting a session removes the file from the folder', async () => {
+    const before = (await fsp.readdir(dir)).filter((f) => f.endsWith('.webm'));
+    expect(before.length).toBeGreaterThan(0);
+
+    page.once('dialog', (d) => d.accept());
+    await page.click('#btn-delete-session');
+    await page.waitForTimeout(800);
+
+    // Deleting from the library must not leave the video behind forever.
+    const after = (await fsp.readdir(dir)).filter((f) => f.endsWith('.webm'));
+    expect(after).toHaveLength(before.length - 1);
+  });
+
+  test('the folder is shown in settings, with what is in it', async () => {
+    await page.click('[data-view="settings"]');
+    await expect(page.locator('#folder-setting')).toBeVisible();
+    await expect(page.locator('#recordings-path')).toHaveText(dir);
+    // Browser-only storage advice is hidden in the app.
+    await expect(page.locator('#browser-storage')).toBeHidden();
   });
 });

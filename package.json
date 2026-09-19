@@ -35,7 +35,11 @@
       "index.html",
       "src/**/*",
       "electron/**/*",
-      "!**/*.map"
+      "build/icon.png",
+      "!**/*.map",
+      "!**/*.md",
+      "!**/test/**",
+      "!**/tests/**"
     ],
     "win": {
       "target": [
@@ -74,7 +78,14 @@
       "shortcutName": "Trade Journal",
       "artifactName": "TradeJournal-Setup-${version}.${ext}",
       "uninstallDisplayName": "Trade Journal"
-    }
+    },
+    "compression": "maximum",
+    "removePackageScripts": true,
+    "removePackageKeywords": true,
+    "asar": true,
+    "electronLanguages": [
+      "en-US"
+    ]
   },
   "author": "Ziv"
 }

@@ -79,7 +79,7 @@ test('records and reviews a stream from the real capture pipeline', async ({ pag
   // And it plays back and seeks.
   await gotoView(page, 'recordings');
   await page.locator(`.session[data-session-id="${sessionId}"]`).click();
-  await expect(page.locator('#video-overlay')).toBeHidden();
+  await expect(page.locator('#timeline-track')).toHaveAttribute('data-ready', 'true');
 
   await page.click('#btn-play');
   await page.waitForFunction(() => document.getElementById('player').currentTime > 0.5);

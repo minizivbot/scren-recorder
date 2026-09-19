@@ -402,9 +402,20 @@ function stat(value, label) {
 let wasStorageLow = false;
 
 async function renderStorage() {
-  const [est, own] = await Promise.all([storageEstimate(), recordingsFootprint()]);
   const fill = $('#storage-fill');
   const text = $('#storage-text');
+
+  // On the desktop the recordings are files, so the folder is the honest
+  // measure — the browser's quota has nothing to do with them.
+  if (isDesktop()) {
+    const usage = await window.desktop.recordings.usage();
+    text.textContent = `${formatBytes(usage.bytes)} in ${usage.files} recording${usage.files === 1 ? '' : 's'}`;
+    fill.style.width = '0%';
+    $('#storage-meter').title = usage.dir;
+    return;
+  }
+
+  const [est, own] = await Promise.all([storageEstimate(), recordingsFootprint()]);
 
   // Our own total, which is exact and drops the moment a session is deleted.
   const mine = `${formatBytes(own.bytes)} in ${own.sessions} session${own.sessions === 1 ? '' : 's'}`;
@@ -457,6 +468,7 @@ function renderSettings() {
 
   renderHotkeys();
   renderPois();
+  renderRecordingsFolder().catch(() => {});
 }
 
 function commitSettings(patch) {
@@ -502,6 +514,13 @@ function wireSettings() {
     });
   }
 
+  $('#btn-choose-folder').addEventListener('click', async () => {
+    const result = await window.desktop.recordings.chooseDir();
+    if (result.changed) await renderRecordingsFolder();
+  });
+
+  $('#btn-open-folder').addEventListener('click', () => window.desktop.recordings.reveal());
+
   $('#btn-persist').addEventListener('click', async () => {
     const granted = await requestPersistentStorage();
     $('#persist-state').textContent = granted
@@ -536,6 +555,20 @@ async function ensurePersistentStorage() {
   state.textContent = granted
     ? 'Granted — recordings will not be evicted.'
     : 'Not granted. The browser may evict recordings under storage pressure.';
+}
+
+/** Shows which folder recordings go to, and what is in it. */
+async function renderRecordingsFolder() {
+  if (!isDesktop()) return;
+
+  $('#folder-setting').hidden = false;
+  const { dir } = await window.desktop.recordings.dir();
+  $('#recordings-path').textContent = dir;
+
+  const usage = await window.desktop.recordings.usage();
+  $('#recordings-usage').textContent = usage.files
+    ? `${usage.files} recording${usage.files === 1 ? '' : 's'}, ${formatBytes(usage.bytes)}`
+    : 'No recordings in this folder yet.';
 }
 
 // ─────────────────────────── setups (POIs) ───────────────────────────
@@ -665,7 +698,8 @@ async function boot() {
     );
   }
 
-  await ensurePersistentStorage();
+  if (isDesktop()) await renderRecordingsFolder();
+  else await ensurePersistentStorage();
 
   await showView('dashboard');
   await renderStorage();

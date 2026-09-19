@@ -53,6 +53,9 @@ jobs:
           retention-days: 90
           if-no-files-found: error
 
+      # A GitHub Actions artifact is always delivered as a zip — that is the
+      # platform, not a setting. A Release attaches the .exe itself, so the
+      # download is the installer rather than a zip containing one.
       - name: Publish a release on a tag
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -61,3 +64,13 @@ jobs:
             dist/TradeJournal-Setup-*.exe
             dist/TradeJournal-Portable-*.exe
           generate_release_notes: true
+          body: |
+            Download **TradeJournal-Setup** below and run it.
+
+            Windows will show "Windows protected your PC" the first time,
+            because the app is not signed with a paid certificate. Click
+            **More info** then **Run anyway**. It only asks once.
+
+      - name: Report the build size
+        shell: bash
+        run: ls -lh dist/*.exe

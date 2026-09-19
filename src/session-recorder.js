@@ -57,6 +57,10 @@ export class SessionRecorder {
     this._stoppedAt = null;
     this._trackEndHandler = null;
     this._quotaHandled = false;
+
+    // Where chunks go. On the desktop this is a real file in a folder the user
+    // picked; in a browser it is IndexedDB, because there is nowhere else.
+    this._sink = options.sink || defaultSink();
   }
 
   // ---- tiny event emitter ---------------------------------------------
@@ -186,6 +190,9 @@ export class SessionRecorder {
 
     await this._openDb();
     try {
+      // Opening the sink first: if the recording has nowhere to go, that has to
+      // fail now rather than two hours in.
+      this._record.storage = await this._sink.open(this.sessionId);
       await this._put('sessions', this._record);
     } catch (err) {
       // If we cannot even write the session row there is no point recording:
@@ -223,13 +230,12 @@ export class SessionRecorder {
 
     const write = (async () => {
       try {
-        await this._put('chunks', {
-          key: chunkKey(this.sessionId, seq),
+        await this._sink.write({
           sessionId: this.sessionId,
           seq,
           atMs,
-          size: e.data.size,
           blob: e.data,
+          put: (value) => this._put('chunks', value),
         });
 
         if (this._record) {
@@ -343,6 +349,13 @@ export class SessionRecorder {
     // how you lose the last timeslice of every session.
     await this._drainWrites();
 
+    const closed = await this._sink.close(this.sessionId).catch((err) => {
+      this._emit('error', err);
+      return null;
+    });
+    if (closed?.bytes) this._record.bytes = closed.bytes;
+    if (closed?.file) this._record.storage = { ...this._record.storage, file: closed.file };
+
     this._record.endedAt = this._stoppedAt;
     this._record.durationMs = this._stoppedAt - this._record.startedAt;
     this._record.status = SESSION_STATUS.COMPLETE;
@@ -389,6 +402,59 @@ export class SessionRecorder {
     const db = await this._openDb();
     return put(db, store, value);
   }
+}
+
+// ---- where the video goes ------------------------------------------------
+
+/**
+ * IndexedDB, for the browser.
+ *
+ * Chunks are rows keyed by an explicit sequence number, because a webm stream
+ * is only valid in order and IndexedDB iteration order is not a contract.
+ */
+export const indexedDbSink = {
+  kind: 'indexeddb',
+  async open() { return { kind: 'indexeddb' }; },
+  async write({ sessionId, seq, atMs, blob, put }) {
+    await put({
+      key: chunkKey(sessionId, seq),
+      sessionId,
+      seq,
+      atMs,
+      size: blob.size,
+      blob,
+    });
+  },
+  async close() { return null; },
+};
+
+/**
+ * A real file on disk, for the desktop app.
+ *
+ * Appended as each timeslice arrives, same as the IndexedDB path — a crash
+ * costs the slice being buffered, never the session. Sequence numbers do not
+ * need storing here: the file is written in order by construction.
+ */
+export function fileSink(api) {
+  return {
+    kind: 'file',
+    async open(sessionId) {
+      const file = await api.open(sessionId);
+      return { kind: 'file', file };
+    },
+    async write({ sessionId, blob }) {
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      await api.write(sessionId, bytes);
+    },
+    async close(sessionId) {
+      return api.close(sessionId);
+    },
+  };
+}
+
+function defaultSink() {
+  const api = globalThis.desktop?.recordings;
+  return api ? fileSink(api) : indexedDbSink;
 }
 
 // ---- markers ------------------------------------------------------------
@@ -487,13 +553,42 @@ export async function getSessionBlob(sessionId) {
 }
 
 /**
+ * A URL the player can use, whichever way the session was stored.
+ *
+ * A file on disk is handed over as a file:// URL rather than read into memory —
+ * a two-hour recording is well over a gigabyte and does not belong in a Blob
+ * just to be played.
+ */
+export async function getSessionMediaUrl(sessionId) {
+  const session = await getSession(sessionId);
+
+  if (session?.storage?.kind === 'file' && globalThis.desktop?.recordings) {
+    const found = await globalThis.desktop.recordings.url(sessionId);
+    return found ? { url: found.url, bytes: found.bytes, revoke: null } : null;
+  }
+
+  const blob = await getSessionBlob(sessionId);
+  if (!blob) return null;
+  const url = URL.createObjectURL(blob);
+  return { url, bytes: blob.size, revoke: () => URL.revokeObjectURL(url) };
+}
+
+/**
  * Deletes the session row AND its chunks, and reports how many bytes went away.
  * Dropping only the row would leave the recording on disk forever.
  */
 export async function deleteSession(sessionId) {
   const db = await openDb();
+  const session = await getSession(sessionId);
   const meta = await listChunkMeta(sessionId);
-  const bytes = meta.reduce((sum, c) => sum + (c.size || 0), 0);
+  let bytes = meta.reduce((sum, c) => sum + (c.size || 0), 0);
+
+  // A session stored on disk has its file removed too, or deleting it from the
+  // library would leave the video behind forever.
+  if (session?.storage?.kind === 'file' && globalThis.desktop?.recordings) {
+    const removed = await globalThis.desktop.recordings.remove(sessionId).catch(() => null);
+    bytes += removed?.bytes || 0;
+  }
 
   await new Promise((resolve, reject) => {
     const tx = db.transaction(['sessions', 'chunks'], 'readwrite');

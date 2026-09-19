@@ -21,13 +21,19 @@ export const EMPTY = {
   losses: 0,
   breakeven: 0,
   totalR: 0,
+  totalPnl: 0,
   winRate: null,
   expectancy: null,
+  expectancyPnl: null,
   avgWin: null,
   avgLoss: null,
+  avgWinPnl: null,
+  avgLossPnl: null,
   profitFactor: null,
   bestR: null,
   worstR: null,
+  bestPnl: null,
+  worstPnl: null,
   tradingDays: 0,
   avgTradesPerDay: null,
 };
@@ -40,8 +46,11 @@ export function computeStats(trades = []) {
   const breakeven = trades.filter((t) => t.outcome === 'breakeven');
 
   const totalR = sum(trades.map((t) => t.r));
+  const totalPnl = sum(trades.map((t) => t.pnl || 0));
   const grossWin = sum(wins.map((t) => t.r));
   const grossLoss = Math.abs(sum(losses.map((t) => t.r)));
+  const grossWinPnl = sum(wins.map((t) => t.pnl || 0));
+  const grossLossPnl = Math.abs(sum(losses.map((t) => t.pnl || 0)));
 
   // Breakeven trades are excluded from the win rate denominator. Counting them
   // as losses would punish good risk management; counting them as wins would
@@ -58,14 +67,19 @@ export function computeStats(trades = []) {
     breakeven: breakeven.length,
 
     totalR: round2(totalR),
+    totalPnl: round2(totalPnl),
     winRate: decisive ? round1((wins.length / decisive) * 100) : null,
 
-    // In R, expectancy is simply the average outcome per trade — what one more
-    // trade is worth, on this record.
+    // Expectancy is the average outcome per trade — what taking one more is
+    // worth, on this record. It is the number that decides whether a strategy
+    // makes money: a 70% win rate with negative expectancy still loses.
     expectancy: round2(totalR / trades.length),
+    expectancyPnl: round2(totalPnl / trades.length),
 
     avgWin: wins.length ? round2(grossWin / wins.length) : null,
     avgLoss: losses.length ? round2(grossLoss / losses.length) : null,
+    avgWinPnl: wins.length ? round2(grossWinPnl / wins.length) : null,
+    avgLossPnl: losses.length ? round2(grossLossPnl / losses.length) : null,
 
     // Undefined rather than Infinity when nothing has lost yet: a profit factor
     // with no losses in it is not a fact about the strategy.
@@ -73,36 +87,48 @@ export function computeStats(trades = []) {
 
     bestR: round2(Math.max(...trades.map((t) => t.r))),
     worstR: round2(Math.min(...trades.map((t) => t.r))),
+    bestPnl: round2(Math.max(...trades.map((t) => t.pnl || 0))),
+    worstPnl: round2(Math.min(...trades.map((t) => t.pnl || 0))),
 
     tradingDays: days.size,
     avgTradesPerDay: round1(trades.length / days.size),
   };
 }
 
-/** Running total of R, oldest first — the shape of the equity curve. */
+/** Running totals, oldest first — the shape of the equity curve. */
 export function equityCurve(trades = []) {
   const ordered = [...trades].sort(
     (a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt,
   );
-  let running = 0;
+  let runningR = 0;
+  let runningPnl = 0;
   return ordered.map((t) => {
-    running += t.r;
-    return { id: t.id, date: t.date, r: t.r, cumulative: round2(running) };
+    runningR += t.r;
+    runningPnl += t.pnl || 0;
+    return {
+      id: t.id, date: t.date, r: t.r, pnl: t.pnl || 0,
+      cumulative: round2(runningR), cumulativePnl: round2(runningPnl),
+    };
   });
 }
 
-/** Largest peak-to-trough fall in R. */
+/** Largest peak-to-trough fall, in R and in money. */
 export function maxDrawdown(trades = []) {
   const curve = equityCurve(trades);
   if (!curve.length) return null;
 
-  let peak = 0;
-  let worst = 0;
-  for (const point of curve) {
-    peak = Math.max(peak, point.cumulative);
-    worst = Math.min(worst, point.cumulative - peak);
-  }
-  return round2(Math.abs(worst));
+  const fall = (key) => {
+    let peak = 0;
+    let worst = 0;
+    for (const point of curve) {
+      peak = Math.max(peak, point[key]);
+      worst = Math.min(worst, point[key] - peak);
+    }
+    // Math.abs(-0) is 0, which keeps "-0.00R" off the screen.
+    return round2(Math.abs(worst));
+  };
+
+  return { r: fall('cumulative'), pnl: fall('cumulativePnl') };
 }
 
 /** Current run of wins or losses, and the longest of each. */
@@ -133,15 +159,18 @@ export function streaks(trades = []) {
 export function byDay(trades = []) {
   const days = new Map();
   for (const t of trades) {
-    if (!days.has(t.date)) days.set(t.date, { date: t.date, r: 0, trades: 0, wins: 0, losses: 0 });
+    if (!days.has(t.date)) {
+      days.set(t.date, { date: t.date, r: 0, pnl: 0, trades: 0, wins: 0, losses: 0 });
+    }
     const day = days.get(t.date);
     day.r += t.r;
+    day.pnl += t.pnl || 0;
     day.trades++;
     if (t.outcome === 'win') day.wins++;
     else if (t.outcome === 'loss') day.losses++;
   }
   return [...days.values()]
-    .map((d) => ({ ...d, r: round2(d.r) }))
+    .map((d) => ({ ...d, r: round2(d.r), pnl: round2(d.pnl) }))
     .sort((a, b) => b.date.localeCompare(a.date));
 }
 
@@ -201,8 +230,21 @@ function round2(n) {
 /** Formats an R value the way a journal reads: signed, two decimals. */
 export function formatR(r) {
   if (r == null || !Number.isFinite(r)) return '—';
-  const rounded = round2(r);
+  // `+ 0` collapses -0 to 0: "-0.00R" reads as a loss that never happened.
+  const rounded = round2(r) + 0;
   return `${rounded > 0 ? '+' : ''}${rounded.toFixed(2)}R`;
+}
+
+/** Money, signed, with no trailing cents when there are none. */
+export function formatMoney(value, currency = '$') {
+  if (value == null || !Number.isFinite(value)) return '—';
+  const rounded = round2(value) + 0;
+  const sign = rounded > 0 ? '+' : rounded < 0 ? '-' : '';
+  const abs = Math.abs(rounded);
+  const body = Number.isInteger(abs)
+    ? abs.toLocaleString()
+    : abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return `${sign}${currency}${body}`;
 }
 
 export function formatPercent(v) {

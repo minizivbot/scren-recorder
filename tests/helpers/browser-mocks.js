@@ -68,6 +68,9 @@ export class FakeMediaRecorder extends EventTarget {
 }
 
 export function installBrowserMocks({ userAgent = 'Chrome/140' } = {}) {
+  // No window.desktop here, so the recorder picks its IndexedDB sink — the
+  // browser path is what these tests are about.
+  delete globalThis.desktop;
   const track = new FakeMediaStreamTrack();
   const stream = new FakeMediaStream(track);
 

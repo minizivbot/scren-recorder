@@ -17,7 +17,7 @@
  */
 import { makeTrade, saveTrade, saveDayReview, getDayReview, dayKey } from './trades.js';
 import { el, clear, formatDuration } from './dom.js';
-import { formatR } from './stats.js';
+import { formatR, formatMoney } from './stats.js';
 
 const RATING_LABELS = {
   1: 'Rough',
@@ -164,6 +164,38 @@ export class SessionWizard {
     const pois = await this.getPois();
     const selected = new Set(editing?.pois || []);
 
+    // The outcome is picked, and the amounts below take its sign. You type 100
+    // on a loss and it is stored as -100 — remembering a minus sign is how a
+    // journal ends up with a loss recorded as a win.
+    let outcome = editing?.outcome || 'win';
+
+    const outcomeRow = el('div', { class: 'outcome-row' });
+    const amountNote = el('p', { class: 'wizard-hint', id: 'amount-note' });
+
+    const paintOutcome = () => {
+      clear(outcomeRow).append(...[
+        ['win', 'Win', 'Target hit, or closed in profit'],
+        ['loss', 'Loss', 'Stopped out, or closed down'],
+        ['breakeven', 'Breakeven', 'Scratched — nothing won or lost'],
+      ].map(([value, label, sub]) => el('button', {
+        class: `outcome-btn${outcome === value ? ' is-on' : ''}`,
+        type: 'button',
+        dataset: { outcome: value },
+        onclick: () => { outcome = value; paintOutcome(); },
+      },
+        el('strong', {}, label),
+        el('span', {}, sub),
+      )));
+
+      // Amount inputs are meaningless on a scratch, so they go away.
+      form?.classList.toggle('is-breakeven', outcome === 'breakeven');
+      amountNote.textContent = outcome === 'breakeven'
+        ? 'A breakeven trade is stored as zero, in both R and money.'
+        : outcome === 'loss'
+          ? 'Type what you lost as a plain positive number — it is recorded as a loss.'
+          : 'Type what you made as a plain positive number.';
+    };
+
     const poiRow = el('div', { class: 'poi-row' });
     const paintPois = () => {
       clear(poiRow).append(...(pois.length ? pois.map((poi) => el('button', {
@@ -185,12 +217,6 @@ export class SessionWizard {
       onsubmit: async (e) => {
         e.preventDefault();
         const data = new FormData(form);
-        const r = Number(data.get('r'));
-
-        if (!Number.isFinite(r)) {
-          form.querySelector('[name="r"]').focus();
-          return;
-        }
 
         const trade = makeTrade({
           ...(editing || {}),
@@ -198,7 +224,9 @@ export class SessionWizard {
           sessionId: this.session?.id || editing?.sessionId || null,
           symbol: data.get('symbol'),
           direction: data.get('direction'),
-          r,
+          outcome,
+          r: data.get('r'),
+          pnl: data.get('pnl'),
           pois: [...selected],
           note: data.get('note'),
         });
@@ -207,24 +235,39 @@ export class SessionWizard {
         const saved = await saveTrade(trade);
         this.savedTrades.push(saved);
 
-        if (editing || data.get('andFinish') === '1') this.close();
+        if (editing) this.close();
         else this._savedStep(saved);
       },
     },
-      el('div', { class: 'field-grid' },
-        el('label', {}, 'Symbol',
-          el('input', { name: 'symbol', placeholder: 'MNQ', value: editing?.symbol || '', autofocus: true })),
-        el('label', {}, 'Side',
-          select('direction', editing?.direction || 'long', [['long', 'Long'], ['short', 'Short']])),
-        el('label', {}, 'Result in R',
+      el('label', { class: 'field-label' }, 'How did it end?'),
+      outcomeRow,
+
+      el('div', { class: 'field-grid amounts' },
+        el('label', {}, 'Risk multiple (R)',
           el('input', {
-            name: 'r', type: 'number', step: '0.01', required: true,
-            placeholder: '2 for a 2R win, -1 for a full stop',
-            value: editing ? String(editing.r) : '',
+            name: 'r', type: 'number', step: '0.01', min: '0', inputmode: 'decimal',
+            placeholder: '2',
+            value: editing ? String(Math.abs(editing.r)) : '',
+          })),
+        el('label', {}, 'Amount',
+          el('input', {
+            name: 'pnl', type: 'number', step: '0.01', min: '0', inputmode: 'decimal',
+            placeholder: '250',
+            value: editing?.pnl ? String(Math.abs(editing.pnl)) : '',
           })),
       ),
+      amountNote,
+
+      el('div', { class: 'field-grid' },
+        el('label', {}, 'Symbol',
+          el('input', { name: 'symbol', placeholder: 'MNQ', value: editing?.symbol || '' })),
+        el('label', {}, 'Side',
+          select('direction', editing?.direction || 'long', [['long', 'Long'], ['short', 'Short']])),
+      ),
+
       el('label', { class: 'field-label' }, 'Why did you take it?'),
       poiRow,
+
       el('label', { class: 'field-label', for: 'trade-note' }, 'Notes'),
       el('textarea', {
         id: 'trade-note', name: 'note', rows: 3,
@@ -232,9 +275,11 @@ export class SessionWizard {
         value: editing?.note || '',
       }),
       el('p', { class: 'wizard-hint' },
-        'A negative R is a loss, 0 is breakeven. This is what every statistic is computed from, '
-        + 'and it is your own report — nothing is read from the recording.'),
+        'This is what every statistic is computed from, and it is your own report — '
+        + 'nothing is read from the recording.'),
     );
+
+    paintOutcome();
 
     this._panel(
       el('div', { class: 'wizard-head' },
@@ -257,7 +302,8 @@ export class SessionWizard {
       el('div', { class: 'wizard-head' },
         el('h2', {}, 'Trade saved'),
         el('p', { class: 'muted' },
-          `${trade.symbol || 'Trade'} ${trade.direction} · ${formatR(trade.r)}`),
+          [trade.symbol || 'Trade', trade.direction, formatR(trade.r),
+            trade.pnl ? formatMoney(trade.pnl) : null].filter(Boolean).join(' · ')),
       ),
       el('div', { class: 'wizard-body' },
         el('div', { class: 'choice-row' },

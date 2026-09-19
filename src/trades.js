@@ -26,8 +26,26 @@ export function dayKey(ts = Date.now()) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/**
+ * Signs a magnitude to match the chosen outcome.
+ *
+ * You pick win or loss and type a plain positive number — typing 100 on a loss
+ * means you lost 100, not that you gained it. Making the user remember a minus
+ * sign is how a journal ends up with a loss recorded as a win.
+ */
+export function applyOutcome(outcome, magnitude) {
+  const abs = Math.abs(Number(magnitude) || 0);
+  if (outcome === 'breakeven') return 0;
+  return outcome === 'loss' ? -abs : abs;
+}
+
 export function makeTrade(data = {}) {
-  const r = Number.isFinite(Number(data.r)) ? Number(data.r) : 0;
+  // The outcome is chosen, not inferred. Both amounts then carry its sign, so
+  // they can never disagree with each other or with the outcome.
+  const outcome = OUTCOMES.includes(data.outcome) ? data.outcome : outcomeFrom(data.r);
+  const r = applyOutcome(outcome, data.r);
+  const pnl = applyOutcome(outcome, data.pnl);
+
   return {
     id: `trd_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     createdAt: Date.now(),
@@ -43,10 +61,16 @@ export function makeTrade(data = {}) {
     symbol: (data.symbol || '').trim().toUpperCase(),
     direction: data.direction === 'short' ? 'short' : 'long',
 
-    // Risk multiple, signed. Losses are negative. This is the only measure of
-    // size, so a 2R win and a 2R loss are comparable across position sizes.
+    outcome,
+
+    // Risk multiple, signed. Comparable across position sizes: a 2R win is a
+    // 2R win whether it was one contract or ten.
     r,
-    outcome: outcomeFor(r),
+
+    // Money, signed the same way. Both are kept because they answer different
+    // questions — R says whether the decision was good, money says what it did
+    // to the account.
+    pnl,
 
     // The trader's own reasons, chosen from the list they define in settings.
     pois: Array.isArray(data.pois) ? data.pois.filter(Boolean) : [],
@@ -55,17 +79,11 @@ export function makeTrade(data = {}) {
   };
 }
 
-/**
- * The outcome always follows R, and is never passed in.
- *
- * It was overridable once, and editing a +3R win down to -1R left it stored as
- * a win — the row showed the loss while the win rate counted it as a win. A
- * derived field that can disagree with what it is derived from is worse than
- * no field, so R is the only source of truth here.
- */
-function outcomeFor(r) {
-  if (r > 0) return 'win';
-  if (r < 0) return 'loss';
+/** Falls back to reading the sign, for a trade saved before outcomes were explicit. */
+function outcomeFrom(r) {
+  const n = Number(r) || 0;
+  if (n > 0) return 'win';
+  if (n < 0) return 'loss';
   return 'breakeven';
 }
 
@@ -73,7 +91,17 @@ function outcomeFor(r) {
 
 export async function saveTrade(trade) {
   const db = await openDb();
-  const record = { ...trade, updatedAt: Date.now(), outcome: outcomeFor(trade.r) };
+  // Re-normalise on the way in, so a record can never be stored with an amount
+  // whose sign contradicts its outcome. Identity and creation time survive it.
+  const record = {
+    ...makeTrade(trade),
+    id: trade.id ?? undefined,
+    createdAt: trade.createdAt ?? undefined,
+    updatedAt: Date.now(),
+  };
+  if (!record.id) record.id = makeTrade({}).id;
+  if (!record.createdAt) record.createdAt = Date.now();
+
   await put(db, 'trades', record);
   return record;
 }
@@ -175,7 +203,10 @@ export async function buildJournal() {
   const days = new Map();
   const ensure = (date) => {
     if (!days.has(date)) {
-      days.set(date, { date, trades: [], sessions: [], review: null, r: 0, wins: 0, losses: 0, breakeven: 0 });
+      days.set(date, {
+        date, trades: [], sessions: [], review: null,
+        r: 0, pnl: 0, wins: 0, losses: 0, breakeven: 0,
+      });
     }
     return days.get(date);
   };
@@ -184,6 +215,7 @@ export async function buildJournal() {
     const day = ensure(t.date);
     day.trades.push(t);
     day.r += t.r;
+    day.pnl += t.pnl || 0;
     if (t.outcome === 'win') day.wins++;
     else if (t.outcome === 'loss') day.losses++;
     else day.breakeven++;
@@ -193,7 +225,7 @@ export async function buildJournal() {
   for (const s of sessions) ensure(dayKey(s.startedAt)).sessions.push(s);
 
   return [...days.values()]
-    .map((d) => ({ ...d, r: round2(d.r) }))
+    .map((d) => ({ ...d, r: round2(d.r), pnl: round2(d.pnl) }))
     .sort((a, b) => b.date.localeCompare(a.date));
 }
 

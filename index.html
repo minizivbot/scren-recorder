@@ -201,14 +201,33 @@
         </div>
 
         <div class="panel">
-          <h3>Storage</h3>
-          <div class="setting-control">
-            <button class="btn btn-ghost" id="btn-persist" type="button">Request persistent storage</button>
-            <span id="persist-state" class="muted"></span>
+          <h3>Where recordings are saved</h3>
+
+          <div class="desktop-only" id="folder-setting" hidden>
+            <div class="folder-row">
+              <code class="folder-path" id="recordings-path">—</code>
+              <button class="btn btn-ghost" id="btn-choose-folder" type="button">Change…</button>
+              <button class="btn btn-ghost" id="btn-open-folder" type="button">Open</button>
+            </div>
+            <p class="setting-help" id="recordings-usage"></p>
+            <p class="setting-help">
+              Video is written straight to this folder as ordinary .webm files — visible in
+              Explorer, easy to back up or move to another drive, and not subject to any storage
+              limit but the disk itself. Changing the folder affects new recordings; existing ones
+              stay where they are.
+            </p>
           </div>
-          <p class="setting-help">
-            Without this the browser may evict recordings under storage pressure.
-          </p>
+
+          <div class="browser-only" id="browser-storage">
+            <div class="setting-control">
+              <button class="btn btn-ghost" id="btn-persist" type="button">Request persistent storage</button>
+              <span id="persist-state" class="muted"></span>
+            </div>
+            <p class="setting-help">
+              In a browser, recordings live in the browser's own storage and it may evict them under
+              pressure. The desktop app writes them to a folder you choose instead.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -233,18 +252,18 @@
             </div>
 
             <div class="timeline" id="timeline">
-              <div class="timeline-track" id="timeline-track">
+              <div class="timeline-track" id="timeline-track" data-ready="false">
                 <div class="timeline-played" id="timeline-played"></div>
                 <div class="timeline-markers" id="timeline-markers"></div>
               </div>
             </div>
 
             <div class="transport">
-              <button class="btn btn-icon" id="btn-play" type="button" aria-label="Play">▶</button>
-              <button class="btn btn-ghost" id="btn-back60" type="button">−60s</button>
-              <button class="btn btn-ghost" id="btn-back10" type="button">−10s</button>
-              <button class="btn btn-ghost" id="btn-fwd10" type="button">+10s</button>
-              <button class="btn btn-ghost" id="btn-fwd60" type="button">+60s</button>
+              <button class="btn btn-icon" id="btn-play" type="button" disabled aria-label="Play">▶</button>
+              <button class="btn btn-ghost" id="btn-back60" type="button" disabled>−60s</button>
+              <button class="btn btn-ghost" id="btn-back10" type="button" disabled>−10s</button>
+              <button class="btn btn-ghost" id="btn-fwd10" type="button" disabled>+10s</button>
+              <button class="btn btn-ghost" id="btn-fwd60" type="button" disabled>+60s</button>
               <span class="time-readout"><span id="time-current">00:00</span> / <span id="time-total">00:00</span></span>
               <label class="rate">
                 Speed
@@ -256,7 +275,7 @@
                   <option value="4">4×</option>
                 </select>
               </label>
-              <button class="btn btn-primary" id="btn-mark-here" type="button">Mark at playhead</button>
+              <button class="btn btn-primary" id="btn-mark-here" type="button" disabled>Mark at playhead</button>
             </div>
 
             <p class="review-hint">

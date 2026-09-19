@@ -100,12 +100,13 @@ export function seekTo(video, seconds, { timeoutMs = 5000 } = {}) {
 }
 
 /**
- * Loads a session blob into a video element and prepares it for seeking.
- * Returns the object URL so the caller can revoke it — a 1.3 GB blob that stays
- * referenced is a 1.3 GB leak.
+ * Points a video element at a recording and prepares it for seeking.
+ *
+ * Takes a URL rather than a Blob: on the desktop the recording is a real file
+ * and is played straight from disk, which keeps a multi-gigabyte session out of
+ * memory entirely.
  */
-export async function loadSessionIntoVideo(video, blob, { fallbackMs = 0 } = {}) {
-  const url = URL.createObjectURL(blob);
+export async function loadSessionIntoVideo(video, url, { fallbackMs = 0 } = {}) {
   video.src = url;
 
   await new Promise((resolve) => {

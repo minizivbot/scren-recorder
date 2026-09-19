@@ -64,7 +64,7 @@ test('a refresh mid-session leaves a recoverable, playable partial session', asy
 
   // And it plays.
   await row.click();
-  await expect(page.locator('#video-overlay')).toBeHidden();
+  await expect(page.locator('#timeline-track')).toHaveAttribute('data-ready', 'true');
   await page.click('#btn-play');
   await page.waitForFunction(() => document.getElementById('player').currentTime > 0.3);
 });
@@ -113,7 +113,7 @@ test('ending the capture from the browser bar finalizes the session', async ({ p
   const row = page.locator(`.session[data-session-id="${sessionId}"]`);
   await expect(row).toBeVisible();
   await row.click();
-  await expect(page.locator('#video-overlay')).toBeHidden();
+  await expect(page.locator('#timeline-track')).toHaveAttribute('data-ready', 'true');
   await page.click('#btn-play');
   await page.waitForFunction(() => document.getElementById('player').currentTime > 0.3);
 });
