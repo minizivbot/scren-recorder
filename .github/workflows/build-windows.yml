@@ -136,7 +136,30 @@ jobs:
 
             Build `1.0.${{ github.run_number }}`.
 
-            ### "Windows protected your PC"
+            ### Installing without the "Windows protected your PC" screen
+
+            SmartScreen reacts to the mark-of-the-web, a tag *browsers* attach
+            to files they download. `curl` does not attach it, so a file
+            fetched this way never triggers the screen. Paste into PowerShell:
+
+            ```powershell
+            cd $env:USERPROFILE\Downloads
+            curl.exe -L -o TradeJournal-Setup.exe https://github.com/minizivbot/scren-recorder/releases/download/latest/TradeJournal-Setup.exe
+
+            $want = ((curl.exe -sL https://github.com/minizivbot/scren-recorder/releases/download/latest/latest.yml |
+                      Select-String '^sha512:' | Select-Object -First 1).Line -replace '^sha512:\s*','').Trim()
+            $got  = [Convert]::ToBase64String([Security.Cryptography.SHA512]::Create().ComputeHash(
+                     [IO.File]::ReadAllBytes("$PWD\TradeJournal-Setup.exe")))
+            if ($got -eq $want) { .\TradeJournal-Setup.exe } else { 'MISMATCH - do not run this file'; del .\TradeJournal-Setup.exe }
+            ```
+
+            That middle step is not a bypass — it is a stricter check than the
+            one being skipped. SmartScreen looks up the reputation of a signing
+            certificate, and an unsigned build has none, so that lookup can only
+            return "unknown"; it never had an opinion about the contents. The
+            hash above proves the file is exactly what this build produced.
+
+            ### Or click through it
 
             **The button you need is hidden.** The dialog only shows
             *Don't run*, so:
@@ -147,14 +170,14 @@ jobs:
             Or, before opening it: right-click the downloaded file →
             **Properties** → tick **Unblock** → **OK**.
 
-            You only do this once. Later versions arrive through the app
+            Either way you do it once. Later versions arrive through the app
             itself, and SmartScreen does not check those.
 
             Windows shows this for any program not signed with a paid
             certificate, whatever is inside it — it is a statement about the
             certificate, not about the file.
             [docs/SIGNING.md](https://github.com/minizivbot/scren-recorder/blob/main/docs/SIGNING.md)
-            lists what actually stops it, cheapest first.
+            lists what removes it for everyone, cheapest first.
 
       # Assets are added, never replaced, so a rename leaves the old installer
       # beside the new one. Four installers on a download page, half of them

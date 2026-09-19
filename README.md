@@ -64,6 +64,10 @@ things. Results are self-reported: this is your journal, not a broker statement.
 and double-click it. No terminal, no server to leave running, no browser tab
 to keep open, and nothing else to install — global hotkeys are built in.
 
+A browser download shows a "Windows protected your PC" screen the first time.
+To install without it, see
+[without the warning](#installing-without-the-warning) below.
+
 The installer runs straight through: no options to pick, installs for the
 current user, makes a desktop and Start menu shortcut, and opens the app when
 it finishes.
@@ -88,25 +92,57 @@ app to replace the binary, and a trading morning cannot be re-recorded, so a
 downloaded update waits until you stop — even if you press the button
 yourself.
 
-### "Windows protected your PC"
+### Installing without the warning
 
-**The button you need is hidden.** The dialog shows only *Don't run*:
+SmartScreen does not inspect the program. It reacts to the
+**mark-of-the-web** — a tag that *browsers* attach to files they download.
+`curl` does not attach it, so a file fetched that way has nothing for
+SmartScreen to react to and the screen never appears.
 
-1. Click **More info** — the small link under the message
-2. Click **Run anyway**, which appears after you do
+Open PowerShell and run these three lines. The middle one is the important
+part: it refuses to continue unless the file matches the hash the build
+published.
 
-Or, before opening it: right-click the file → **Properties** → tick
+```powershell
+cd $env:USERPROFILE\Downloads
+curl.exe -L -o TradeJournal-Setup.exe https://github.com/minizivbot/scren-recorder/releases/download/latest/TradeJournal-Setup.exe
+
+# Compare against the hash in the build's own manifest, then install.
+$want = ((curl.exe -sL https://github.com/minizivbot/scren-recorder/releases/download/latest/latest.yml |
+          Select-String '^sha512:' | Select-Object -First 1).Line -replace '^sha512:\s*','').Trim()
+$got  = [Convert]::ToBase64String([Security.Cryptography.SHA512]::Create().ComputeHash(
+         [IO.File]::ReadAllBytes("$PWD\TradeJournal-Setup.exe")))
+if ($got -eq $want) { .\TradeJournal-Setup.exe } else { 'MISMATCH - do not run this file'; del .\TradeJournal-Setup.exe }
+```
+
+This is not a way of skipping a safety check. The check SmartScreen would
+have run is a reputation lookup on the signing certificate, and this app has
+no certificate, so that lookup can only ever return "unknown" — it never had
+an opinion about the contents. The hash comparison above is the stronger
+check of the two: reputation tells you whether other people have run a file,
+a hash tells you the file is the one the build produced, byte for byte. If it
+prints `MISMATCH`, do not run it, and tell me.
+
+You do this **once**. Updates afterwards arrive through the app, which
+SmartScreen does not examine at all.
+
+### If you would rather just click through it
+
+1. Click **More info** — the small link under the message, which is the only
+   way to reveal the button; the dialog shows only *Don't run* until you do
+2. Click **Run anyway**
+
+Or, before opening the file: right-click it → **Properties** → tick
 **Unblock** → **OK**.
 
-**Once per machine, not once per version.** Updates do not arrive through a
-browser, and SmartScreen does not check those — so this is a one-time cost of
-the first install even though the app keeps changing.
+### Why it happens at all
 
 Windows shows this for any program not signed with a paid certificate,
 whatever is inside it. It cannot be turned off from the code — no build flag,
-no installer format, no zip. [docs/SIGNING.md](docs/SIGNING.md) lists what
-actually works, cheapest first, including a free route: publishing through the
-Microsoft Store, where Microsoft signs the app and the warning never appears.
+no installer format, no zip. [docs/SIGNING.md](docs/SIGNING.md) lists the
+routes that remove it for everyone rather than per-machine, including a free
+one: publishing through the Microsoft Store, where Microsoft signs the app and
+the warning never appears.
 
 The build signs itself automatically once a certificate exists — add the
 repository secrets and nothing else changes.

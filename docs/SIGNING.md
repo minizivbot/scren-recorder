@@ -97,7 +97,33 @@ To encode the certificate:
 
 Push anything and the next build is signed. The build log says which it did.
 
-## In the meantime
+## Avoiding the screen without any of the above
+
+Everything above removes the warning *for everyone*. This removes it for
+whoever runs the install command, and costs nothing.
+
+SmartScreen never looks inside the program. It reacts to the
+**mark-of-the-web**, a tag that browsers attach to files they download.
+`curl.exe` and `Invoke-WebRequest` do not attach it, so a file fetched with
+either has nothing for SmartScreen to react to. The README's
+[install commands](../README.md#installing-without-the-warning) do exactly
+that, and check the file's SHA-512 against the hash in the build's own
+`latest.yml` before running it.
+
+Worth being precise about what that trade is, because it looks like skipping
+a safety check and is not. The check being skipped is a reputation lookup on
+a signing certificate. This build has no certificate, so the lookup can only
+ever answer "unknown" — it never had an opinion about the contents. The hash
+comparison that replaces it is the stronger of the two: reputation tells you
+whether other people have run a file, a hash tells you the file is the one
+the build produced, byte for byte.
+
+What it does **not** do is vouch for the publisher. Someone you hand this to
+still has to decide whether they trust you — the command just moves that
+decision out of a dialog that calls your app unrecognised. If you are
+distributing to strangers, sign it or use the Store.
+
+## Clicking through it instead
 
 The dialog hides the button you need. It shows only **Don't run**, and
 **Run anyway** appears only after you click the small **More info** link under
