@@ -83,6 +83,23 @@ jobs:
             echo "Add the WINDOWS_CERT_BASE64 and WINDOWS_CERT_PASSWORD secrets to fix that."
           fi
 
+      - name: Check the update feed is complete
+        shell: bash
+        run: |
+          set -e
+          test -f dist/latest.yml || { echo "latest.yml missing - installed copies cannot find updates"; exit 1; }
+          cat dist/latest.yml
+          # The filename in latest.yml has to be one we actually upload.
+          named=$(grep -E '^\s*(path|url):' dist/latest.yml | head -1 | sed 's/.*: *//' | tr -d '\r')
+          test -f "dist/$named" || { echo "latest.yml points at $named, which was not built"; exit 1; }
+          grep -q "1.0.${{ github.run_number }}" dist/latest.yml \
+            || { echo "latest.yml does not carry this build's version"; exit 1; }
+          echo "Update feed OK: $named at 1.0.${{ github.run_number }}"
+
+      # Assets are added, never removed, so a rename leaves the old installer
+      # sitting next to the new one. Four installers on a download page, two of
+      # them stale and unable to update themselves, is how a download starts
+      # looking untrustworthy. Anything not built by this run goes.
       - uses: actions/upload-artifact@v4
         with:
           name: TradeJournal
@@ -143,18 +160,27 @@ jobs:
             [docs/SIGNING.md](https://github.com/minizivbot/scren-recorder/blob/main/docs/SIGNING.md)
             lists what actually stops it, cheapest first.
 
-      - name: Check the update feed is complete
+      - name: Remove installers left over from older builds
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
-          test -f dist/latest.yml || { echo "latest.yml missing - installed copies cannot find updates"; exit 1; }
-          cat dist/latest.yml
-          # The filename in latest.yml has to be one we actually upload.
-          named=$(grep -E '^\s*(path|url):' dist/latest.yml | head -1 | sed 's/.*: *//' | tr -d '\r')
-          test -f "dist/$named" || { echo "latest.yml points at $named, which was not built"; exit 1; }
-          grep -q "1.0.${{ github.run_number }}" dist/latest.yml \
-            || { echo "latest.yml does not carry this build's version"; exit 1; }
-          echo "Update feed OK: $named at 1.0.${{ github.run_number }}"
+          set -euo pipefail
+          keep="TradeJournal-Setup.exe TradeJournal-Setup.exe.blockmap TradeJournal-Portable.exe latest.yml"
+          api="https://api.github.com/repos/${{ github.repository }}"
+
+          assets=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" "$api/releases/tags/latest" \
+            | python -c "import json,sys; [print(a['id'], a['name']) for a in json.load(sys.stdin)['assets']]")
+
+          while read -r id name; do
+            [ -n "$name" ] || continue
+            if ! grep -qw -- "$name" <<<"$keep"; then
+              echo "removing stale asset: $name"
+              curl -fsSL -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$api/releases/assets/$id"
+            fi
+          done <<<"$assets"
+
+          echo "kept: $keep"
 
       - name: Report the build size
         shell: bash
