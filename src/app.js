@@ -11,11 +11,12 @@ import { ReviewView } from './review.js';
 import { BridgeClient } from './bridge-client.js';
 import { isDesktop, initDesktop, toAccelerators } from './desktop.js';
 import { $, el, clear, formatDate, formatClock, formatDuration } from './dom.js';
-import { renderDashboard, renderJournal, renderTrades } from './views.js';
+import { renderDashboard, renderJournal, renderTrades, stepCalendar, setCalendarMonth } from './views.js';
 import { SessionWizard } from './wizard.js';
 import { getDayReview } from './trades.js';
 import { eraseEverything } from './erase.js';
 import { confirmTyped } from './dialog.js';
+import { wireUpdates } from './updates-ui.js';
 
 const KIND_LABEL = { entry: 'Entry', exit: 'Exit', note: 'Note' };
 
@@ -84,6 +85,9 @@ async function refreshView(id = currentView) {
     await renderJournal({
       onOpenSession: (sessionId) => openRecording(sessionId),
       onEditDay: (day) => editDayNote(day),
+      // Clicking a box opens that day, whether or not it has trades yet — an
+      // empty day is where you add the ones you forgot to log.
+      onPickDay: (cell) => editDayNote({ date: cell.key }),
     });
   } else if (id === 'trades') {
     await renderTrades({
@@ -691,6 +695,31 @@ async function editDayNote(day) {
   await refreshView('journal');
 }
 
+/** Calendar vs. list. Both read the same journal; only the shape differs. */
+function wireJournalModes() {
+  const modes = $('#journal-modes');
+  if (!modes) return;
+
+  modes.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mode-btn');
+    if (!btn) return;
+    const calendar = btn.dataset.mode === 'calendar';
+    for (const b of modes.querySelectorAll('.mode-btn')) {
+      b.classList.toggle('is-on', b === btn);
+    }
+    $('#journal-calendar').hidden = !calendar;
+    $('#journal-list').hidden = calendar;
+  });
+
+  $('#cal-prev').addEventListener('click', async () => { stepCalendar(-1); await refreshView('journal'); });
+  $('#cal-next').addEventListener('click', async () => { stepCalendar(1); await refreshView('journal'); });
+  $('#cal-today').addEventListener('click', async () => {
+    const now = new Date();
+    setCalendarMonth({ year: now.getFullYear(), month: now.getMonth() });
+    await refreshView('journal');
+  });
+}
+
 // ─────────────────────────── banners ───────────────────────────
 
 let alertTimer = null;
@@ -762,8 +791,15 @@ async function boot() {
     );
   }
 
-  if (isDesktop()) await renderRecordingsFolder();
-  else await ensurePersistentStorage();
+  wireJournalModes();
+
+  if (isDesktop()) {
+    await renderRecordingsFolder();
+    // Reports what the main process is doing; it starts checking on its own.
+    wireUpdates();
+  } else {
+    await ensurePersistentStorage();
+  }
 
   await showView('dashboard');
   await renderStorage();

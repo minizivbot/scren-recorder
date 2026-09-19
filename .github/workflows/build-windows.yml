@@ -40,6 +40,15 @@ jobs:
       # say which one, so this names it.
       - run: npm run check:build
 
+      # Each build needs a version above the last, or an installed copy has
+      # nothing to update to. The run number only ever goes up, so it is the
+      # build number. Not committed — it applies to this build's artifacts.
+      - name: Number this build
+        shell: bash
+        run: |
+          npm version --no-git-tag-version --allow-same-version "1.0.${{ github.run_number }}"
+          echo "Building version 1.0.${{ github.run_number }}"
+
       # The recorder core is shared with the browser version, so the unit tests
       # guard the app too. A broken build should not ship an .exe.
       - run: npm test
@@ -56,11 +65,18 @@ jobs:
         env:
           CSC_LINK: ${{ secrets.WINDOWS_CERT_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          # Azure Trusted Signing — the ~$10/month route. electron-builder
+          # reads these four itself when build.win.azureSignOptions is set.
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_CODE_SIGNING_NAME: ${{ secrets.AZURE_CODE_SIGNING_NAME }}
+          AZURE_CERT_PROFILE_NAME: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
 
       - name: Say whether this build is signed
         shell: bash
         run: |
-          if [ -n "${{ secrets.WINDOWS_CERT_BASE64 }}" ]; then
+          if [ -n "${{ secrets.WINDOWS_CERT_BASE64 }}" ] || [ -n "${{ secrets.AZURE_CLIENT_ID }}" ]; then
             echo "Signed build — SmartScreen should not warn."
           else
             echo "UNSIGNED build. Windows will show SmartScreen on first run."
@@ -71,8 +87,9 @@ jobs:
         with:
           name: TradeJournal
           path: |
-            dist/TradeJournal-Setup-*.exe
-            dist/TradeJournal-Portable-*.exe
+            dist/TradeJournal-Setup.exe*
+            dist/TradeJournal-Portable.exe
+            dist/latest.yml
           retention-days: 90
           if-no-files-found: error
 
@@ -88,29 +105,56 @@ jobs:
           tag_name: latest
           name: Trade Journal — latest build
           files: |
-            dist/TradeJournal-Setup-*.exe
-            dist/TradeJournal-Portable-*.exe
+            dist/TradeJournal-Setup.exe*
+            dist/TradeJournal-Portable.exe
+            dist/latest.yml
           body: |
             ## Download
 
-            **TradeJournal-Setup-1.0.0.exe** — installer, adds a desktop and
-            Start menu shortcut. This is the one you want.
+            **TradeJournal-Setup.exe** — installer, adds a desktop and Start
+            menu shortcut. This is the one you want. Download it once: the app
+            updates itself from then on.
 
-            **TradeJournal-Portable-1.0.0.exe** — single file, installs nothing.
+            **TradeJournal-Portable.exe** — single file, installs nothing. It
+            cannot update itself, so it has to be re-downloaded by hand.
 
             The installer runs straight through — no options to pick. It
             installs for the current user and opens the app when it is done.
 
+            Build `1.0.${{ github.run_number }}`.
+
             ### "Windows protected your PC"
 
-            Click **More info**, then **Run anyway**. It only asks once per
-            machine.
+            **The button you need is hidden.** The dialog only shows
+            *Don't run*, so:
 
-            Windows shows this for any program that is not signed with a paid
-            certificate, whatever is inside it. It is a statement about the
-            certificate, not about the file. See
+            1. Click **More info** — the small link under the message
+            2. Click **Run anyway**, which appears after you do
+
+            Or, before opening it: right-click the downloaded file →
+            **Properties** → tick **Unblock** → **OK**.
+
+            You only do this once. Later versions arrive through the app
+            itself, and SmartScreen does not check those.
+
+            Windows shows this for any program not signed with a paid
+            certificate, whatever is inside it — it is a statement about the
+            certificate, not about the file.
             [docs/SIGNING.md](https://github.com/minizivbot/scren-recorder/blob/main/docs/SIGNING.md)
-            for how to make it stop.
+            lists what actually stops it, cheapest first.
+
+      - name: Check the update feed is complete
+        shell: bash
+        run: |
+          set -e
+          test -f dist/latest.yml || { echo "latest.yml missing - installed copies cannot find updates"; exit 1; }
+          cat dist/latest.yml
+          # The filename in latest.yml has to be one we actually upload.
+          named=$(grep -E '^\s*(path|url):' dist/latest.yml | head -1 | sed 's/.*: *//' | tr -d '\r')
+          test -f "dist/$named" || { echo "latest.yml points at $named, which was not built"; exit 1; }
+          grep -q "1.0.${{ github.run_number }}" dist/latest.yml \
+            || { echo "latest.yml does not carry this build's version"; exit 1; }
+          echo "Update feed OK: $named at 1.0.${{ github.run_number }}"
 
       - name: Report the build size
         shell: bash

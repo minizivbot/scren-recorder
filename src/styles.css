@@ -61,7 +61,11 @@ code { background: #0b0e13; padding: 1px 5px; border-radius: 4px; font-size: 12p
 .storage-text { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* ── layout ──────────────────────────────────────────────── */
-main { max-width: 1180px; margin: 0 auto; padding: 20px; }
+/*
+ * No width or margin on <main>: it is a grid item now, and `margin: 0 auto`
+ * on a grid item turns off stretch and shrink-wraps it, which was squeezing
+ * every page into little over half its column. .layout owns the width.
+ */
 .panel {
   background: var(--panel); border: 1px solid var(--line-soft);
   border-radius: var(--radius); padding: 22px; margin-bottom: 18px;
@@ -652,3 +656,96 @@ input:focus, select:focus, textarea:focus {
   background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
   font: 13px/1.6 ui-sans-serif, system-ui, sans-serif; color: var(--text);
 }
+
+/* ─────────────────────────── month calendar ─────────────────────────── */
+/*
+ * A day's colour carries the whole message, so the tints are strong enough to
+ * read at a glance across a month, and the amount sits on top of them rather
+ * than beside them. Tone comes from the trader's own entries; a day with no
+ * trades gets no tint at all rather than a neutral grey that reads as flat.
+ */
+
+.journal-modes { display: flex; gap: 2px; margin-left: auto; background: var(--panel-2); padding: 3px; border-radius: 9px; }
+.mode-btn {
+  border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px;
+  font-weight: 600; padding: 5px 12px; border-radius: 7px; cursor: pointer;
+}
+.mode-btn:hover { color: var(--text); }
+.mode-btn.is-on { background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
+
+.calendar-wrap { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; }
+
+.cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.cal-head h3 { margin: 0; font-size: 16px; min-width: 165px; text-align: center; }
+.cal-totals { margin-left: auto; display: flex; align-items: baseline; gap: 10px; }
+.cal-total { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cal-total-sub { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cal-total-meta { font-size: 12px; }
+.cal-total[data-tone="up"], .cal-total-sub[data-tone="up"] { color: var(--entry); }
+.cal-total[data-tone="down"], .cal-total-sub[data-tone="down"] { color: var(--rec); }
+
+/* Seven days plus a narrower week-total column. */
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr) 84px; gap: 6px; }
+
+.cal-weekday {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--muted); text-align: center; padding-bottom: 4px;
+}
+.cal-week-head { text-align: right; padding-right: 8px; }
+
+.cal-day {
+  position: relative; display: flex; flex-direction: column; align-items: flex-start;
+  min-height: 78px; padding: 7px 8px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--line-soft); background: var(--panel-2); color: var(--text);
+  font: inherit; text-align: left; transition: transform .08s ease, border-color .12s ease;
+}
+.cal-day:hover { transform: translateY(-1px); border-color: var(--accent); }
+.cal-day[data-outside="true"] { opacity: .32; }
+.cal-day[data-today="true"] { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.cal-day[data-tone="win"]  { background: #12351f; border-color: #1f5c34; }
+.cal-day[data-tone="loss"] { background: #3a161a; border-color: #6b262d; }
+.cal-day[data-tone="flat"] { background: #22283a; border-color: #333d54; }
+
+.cal-num { font-size: 11px; font-weight: 700; color: var(--muted); }
+.cal-day[data-tone="win"] .cal-num  { color: #74e3a4; }
+.cal-day[data-tone="loss"] .cal-num { color: #ffa3a8; }
+
+.cal-amount {
+  margin-top: auto; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.cal-day[data-tone="win"] .cal-amount  { color: #57e08f; }
+.cal-day[data-tone="loss"] .cal-amount { color: #ff7076; }
+.cal-sub { font-size: 11px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.cal-marks { position: absolute; top: 6px; right: 7px; display: flex; gap: 4px; align-items: center; }
+.cal-film { font-size: 9px; color: var(--accent); }
+.cal-rating { font-size: 8px; color: var(--exit); letter-spacing: -1px; }
+
+.cal-week-total {
+  display: flex; align-items: center; justify-content: flex-end; padding-right: 8px;
+  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+  border-left: 1px solid var(--line); color: var(--muted);
+}
+.cal-week-total[data-tone="up"] { color: var(--entry); }
+.cal-week-total[data-tone="down"] { color: var(--rec); }
+
+@media (max-width: 1100px) {
+  .cal-grid { grid-template-columns: repeat(7, 1fr); }
+  .cal-week-total, .cal-week-head { display: none; }
+  .cal-day { min-height: 62px; }
+  .cal-amount { font-size: 13px; }
+}
+
+/* ─────────────────────────── updates ─────────────────────────── */
+
+.banner-update { background: #10304a; color: #a8d5ff; display: flex; align-items: center; gap: 12px; }
+.banner-update .btn { margin-left: auto; }
+.banner-update .btn + .btn { margin-left: 0; }
+
+.update-row { display: flex; align-items: flex-start; gap: 16px; }
+.update-version { font-weight: 600; font-size: 14px; }
+.update-actions { margin-left: auto; display: flex; gap: 8px; flex-shrink: 0; }
+.update-bar { height: 4px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin: 10px 0 4px; }
+.update-bar span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s ease; }

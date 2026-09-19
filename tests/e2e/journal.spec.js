@@ -251,6 +251,8 @@ test('the journal note buttons actually do something', async ({ page }) => {
   await page.click('#wizard-finish');
 
   await page.click('[data-view="journal"]');
+  // The journal opens on the calendar now; the note buttons live in the list.
+  await page.locator('.mode-btn[data-mode="list"]').click();
   await page.getByRole('button', { name: 'Add note' }).first().click();
 
   // A real dialog, in the page, not a native prompt.
@@ -313,4 +315,106 @@ test('the amount field is labelled P&L', async ({ page }) => {
   await page.click('#btn-add-trade');
   await expect(page.locator('.field-grid.amounts')).toContainText('P&L');
   await expect(page.locator('.field-grid.amounts')).toContainText('Risk multiple (R)');
+});
+
+test('the month calendar colours each day by its result and shows the amount', async ({ page }) => {
+  await page.goto('/');
+
+  // Seed three days directly: a winner, a loser, and a day that was recorded
+  // but never logged. Going through the UI would put them all on today.
+  await page.evaluate(async () => {
+    const { saveTrade } = await import('/src/trades.js');
+    const now = new Date();
+    const on = (dayOfMonth) =>
+      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(dayOfMonth).padStart(2, '0')}`;
+
+    await saveTrade({ symbol: 'MNQ', direction: 'long', outcome: 'win', r: 3, pnl: 600, date: on(3) });
+    await saveTrade({ symbol: 'MES', direction: 'short', outcome: 'loss', r: -1, pnl: -250, date: on(4) });
+    // Two on one day, netting negative: the box follows the day, not a trade.
+    await saveTrade({ symbol: 'MNQ', direction: 'long', outcome: 'win', r: 1, pnl: 100, date: on(5) });
+    await saveTrade({ symbol: 'MNQ', direction: 'long', outcome: 'loss', r: -2, pnl: -400, date: on(5) });
+  });
+
+  await page.click('[data-view="journal"]');
+  await expect(page.locator('#journal-calendar')).toBeVisible();
+
+  const dayBox = (n) => {
+    const now = new Date();
+    const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(n).padStart(2, '0')}`;
+    return page.locator(`.cal-day[data-date="${key}"]`);
+  };
+
+  await expect(dayBox(3)).toHaveAttribute('data-tone', 'win');
+  await expect(dayBox(3).locator('.cal-amount')).toHaveText('+$600');
+
+  await expect(dayBox(4)).toHaveAttribute('data-tone', 'loss');
+  await expect(dayBox(4).locator('.cal-amount')).toHaveText('-$250');
+
+  // Net of +100 and -400 is a red day, even though one of the two trades won.
+  await expect(dayBox(5)).toHaveAttribute('data-tone', 'loss');
+  await expect(dayBox(5).locator('.cal-amount')).toHaveText('-$300');
+
+  // A day with nothing entered gets no colour and no number invented for it.
+  await expect(dayBox(28)).toHaveAttribute('data-tone', 'none');
+  await expect(dayBox(28).locator('.cal-amount')).toHaveCount(0);
+
+  // The month total is the sum of those days and nothing else:
+  // +600 - 250 - 300 = +50.
+  await expect(page.locator('.cal-total').first()).toHaveText('+$50');
+});
+
+test('the calendar walks through months and back to today', async ({ page }) => {
+  await page.goto('/');
+  await page.click('[data-view="journal"]');
+
+  const label = page.locator('#cal-label');
+  const start = await label.textContent();
+
+  await page.click('#cal-prev');
+  await expect(label).not.toHaveText(start);
+  const previous = await label.textContent();
+
+  await page.click('#cal-next');
+  await expect(label).toHaveText(start);
+
+  // Far enough to cross a year boundary, then straight home.
+  for (let i = 0; i < 14; i += 1) await page.click('#cal-prev');
+  await expect(label).not.toHaveText(previous);
+  await page.click('#cal-today');
+  await expect(label).toHaveText(start);
+
+  // Every row is a full week, whatever month we land on.
+  const cells = await page.locator('.cal-day').count();
+  expect(cells % 7).toBe(0);
+});
+
+test('clicking a day opens that day, and the list view still works', async ({ page }) => {
+  await page.goto('/');
+  await page.click('[data-view="journal"]');
+
+  const now = new Date();
+  const key = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-07`;
+  await page.locator(`.cal-day[data-date="${key}"]`).click();
+
+  // The same rating-and-note step the end-of-session review opens with.
+  await expect(page.locator('.wizard')).toBeVisible();
+  await expect(page.locator('.wizard-head h2')).toHaveText('How was this day?');
+  await page.locator('.star-btn').nth(3).click();
+  await page.fill('#day-note', 'Chose this day from the calendar.');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.locator('.wizard')).toHaveCount(0);
+
+  const saved = await page.evaluate(async (date) => {
+    const { getDayReview } = await import('/src/trades.js');
+    return getDayReview(date);
+  }, key);
+  expect(saved.rating).toBe(4);
+  expect(saved.note).toContain('calendar');
+
+  await page.locator('.mode-btn[data-mode="list"]').click();
+  await expect(page.locator('#journal-list')).toBeVisible();
+  await expect(page.locator('#journal-calendar')).toBeHidden();
+
+  await page.locator('.mode-btn[data-mode="calendar"]').click();
+  await expect(page.locator('#journal-calendar')).toBeVisible();
 });

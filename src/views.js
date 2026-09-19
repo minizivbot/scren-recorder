@@ -11,6 +11,7 @@ import {
 } from './stats.js';
 import { listTrades, buildJournal, deleteTrade } from './trades.js';
 import { $, el, clear, formatDate } from './dom.js';
+import { monthGrid, monthTotals, monthLabel, shiftMonth, WEEKDAYS, parseDayKey } from './calendar.js';
 import { formatDuration } from './dom.js';
 
 export const RANGES = [
@@ -187,10 +188,105 @@ async function renderRecentDays(allTrades) {
 
 // ─────────────────────────── journal ───────────────────────────
 
-export async function renderJournal({ onOpenSession, onEditDay } = {}) {
+/**
+ * Which month the calendar is showing. Kept here rather than in settings: it
+ * is a place in a view, not a preference worth persisting across restarts.
+ */
+let calendarMonth = null;
+
+export function setCalendarMonth(next) {
+  calendarMonth = next;
+}
+
+export function getCalendarMonth() {
+  if (!calendarMonth) {
+    const now = new Date();
+    calendarMonth = { year: now.getFullYear(), month: now.getMonth() };
+  }
+  return calendarMonth;
+}
+
+export function stepCalendar(delta) {
+  calendarMonth = shiftMonth(getCalendarMonth(), delta);
+}
+
+/**
+ * The month as a grid.
+ *
+ * Green with the amount when the day ended up, red when it ended down. The
+ * figure is the day's P&L when one was entered, and the day's R when it was
+ * not — never a number derived from a recording.
+ */
+export function renderCalendar(days, { onPickDay } = {}) {
+  const { year, month } = getCalendarMonth();
+  const weeks = monthGrid({ year, month, days });
+  const totals = monthTotals({ year, month, days });
+
+  $('#cal-label').textContent = monthLabel({ year, month });
+
+  const totalsEl = clear($('#cal-totals'));
+  if (totals.hasData) {
+    totalsEl.append(
+      el('span', { class: 'cal-total', dataset: { tone: rClass(totals.pnl) } }, formatMoney(totals.pnl)),
+      el('span', { class: 'cal-total-sub', dataset: { tone: rClass(totals.r) } }, formatR(totals.r)),
+      el('span', { class: 'cal-total-meta muted' },
+        `${totals.days} day${totals.days === 1 ? '' : 's'} · ${totals.greenDays}G ${totals.redDays}R · ${totals.trades} trade${totals.trades === 1 ? '' : 's'}`),
+    );
+  } else {
+    totalsEl.append(el('span', { class: 'muted' }, 'No trades logged this month'));
+  }
+
+  const grid = clear($('#cal-grid'));
+
+  for (const name of WEEKDAYS) grid.append(el('div', { class: 'cal-weekday' }, name));
+  grid.append(el('div', { class: 'cal-weekday cal-week-head' }, 'Week'));
+
+  for (const week of weeks) {
+    for (const cell of week.cells) {
+      const amount = cell.pnl !== null && cell.pnl !== 0 ? formatMoney(cell.pnl)
+        : cell.tradeCount ? formatR(cell.r) : null;
+
+      grid.append(el('button', {
+        class: 'cal-day',
+        type: 'button',
+        // No trades means nothing to open beyond the note, but the day is
+        // still a real journal entry, so it stays clickable.
+        dataset: {
+          tone: cell.tone,
+          outside: String(cell.outside),
+          today: String(cell.isToday),
+          date: cell.key,
+        },
+        title: cell.tradeCount
+          ? `${cell.tradeCount} trade${cell.tradeCount === 1 ? '' : 's'}`
+          : cell.hasRecording ? 'Recorded, no trades logged' : 'No trades',
+        onclick: () => onPickDay?.(cell),
+      },
+        el('span', { class: 'cal-num' }, String(cell.dayOfMonth)),
+        amount ? el('span', { class: 'cal-amount' }, amount) : null,
+        cell.tradeCount && cell.pnl !== null && cell.pnl !== 0
+          ? el('span', { class: 'cal-sub' }, formatR(cell.r)) : null,
+        el('span', { class: 'cal-marks' },
+          cell.hasRecording ? el('span', { class: 'cal-film', title: 'Has a recording' }, '\u25b6') : null,
+          cell.rating ? el('span', { class: 'cal-rating' }, '\u2605'.repeat(cell.rating)) : null,
+        ),
+      ));
+    }
+
+    grid.append(el('div', { class: 'cal-week-total', dataset: { tone: week.hasData ? rClass(week.pnl || week.r) : 'none' } },
+      week.hasData
+        ? el('span', {}, week.pnl ? formatMoney(week.pnl) : formatR(week.r))
+        : el('span', { class: 'muted' }, '\u2014'),
+    ));
+  }
+}
+
+export async function renderJournal({ onOpenSession, onEditDay, onPickDay } = {}) {
   const days = await buildJournal();
   $('#journal-count').textContent = String(days.length);
   $('#journal-empty').hidden = days.length > 0;
+
+  renderCalendar(days, { onPickDay });
 
   const list = clear($('#journal-list'));
 

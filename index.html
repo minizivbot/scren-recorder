@@ -26,6 +26,11 @@
     </div>
   </header>
 
+  <div class="banner banner-update" id="update-banner" hidden>
+    <span id="update-banner-text"></span>
+    <button class="btn btn-small" id="btn-banner-install" type="button">Restart now</button>
+    <button class="btn btn-ghost btn-small" id="btn-banner-dismiss" type="button">Later</button>
+  </div>
   <div class="banner banner-error" id="support-banner" hidden></div>
   <div class="banner banner-warn" id="alert-banner" hidden></div>
 
@@ -100,8 +105,24 @@
         <div class="view-head">
           <h2>Journal</h2>
           <span class="count" id="journal-count">0</span>
+          <div class="journal-modes" id="journal-modes">
+            <button class="mode-btn is-on" type="button" data-mode="calendar">Calendar</button>
+            <button class="mode-btn" type="button" data-mode="list">List</button>
+          </div>
         </div>
-        <div id="journal-list" class="journal-list"></div>
+
+        <div id="journal-calendar" class="calendar-wrap">
+          <div class="cal-head">
+            <button class="btn btn-ghost btn-small" id="cal-prev" type="button" aria-label="Previous month">‹</button>
+            <h3 id="cal-label">—</h3>
+            <button class="btn btn-ghost btn-small" id="cal-next" type="button" aria-label="Next month">›</button>
+            <button class="btn btn-ghost btn-small" id="cal-today" type="button">Today</button>
+            <div class="cal-totals" id="cal-totals"></div>
+          </div>
+          <div class="cal-grid" id="cal-grid"></div>
+        </div>
+
+        <div id="journal-list" class="journal-list" hidden></div>
         <p class="empty" id="journal-empty">
           Nothing logged yet. Record a session, or add a trade from the Trades page.
         </p>
@@ -198,6 +219,26 @@
             <label>Exit <input type="text" id="set-key-exit" maxlength="1"></label>
             <label>Note <input type="text" id="set-key-note" maxlength="1"></label>
           </div>
+        </div>
+
+        <div class="panel desktop-only" id="update-panel" hidden>
+          <h3>Updates</h3>
+          <div class="update-row">
+            <div>
+              <div class="update-version">Version <span id="update-current">—</span></div>
+              <p class="setting-help" id="update-status">Checking for updates…</p>
+            </div>
+            <div class="update-actions">
+              <button class="btn btn-ghost" id="btn-check-update" type="button">Check now</button>
+              <button class="btn" id="btn-install-update" type="button" hidden>Restart and install</button>
+            </div>
+          </div>
+          <div class="update-bar" id="update-bar" hidden><span id="update-bar-fill"></span></div>
+          <p class="setting-help">
+            The app keeps itself up to date: it downloads new versions in the background and
+            installs them when you close it, so you only ever download it by hand once. An update
+            is never installed while a session is recording — it waits until you stop.
+          </p>
         </div>
 
         <div class="panel">

@@ -21,6 +21,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { initUpdater, check as checkForUpdate, installNow, installOnQuitIfReady, getUpdateState, stopUpdater } from './updater.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -153,6 +154,11 @@ ipcMain.handle('app-info', () => ({
   platform: process.platform,
   recordingsPath: app.getPath('userData'),
 }));
+
+// ── self-update ─────────────────────────────────────────────────────────────
+ipcMain.handle('update-state', () => getUpdateState());
+ipcMain.handle('update-check', () => checkForUpdate(true));
+ipcMain.handle('update-install', () => installNow());
 
 // ── recordings on disk ──────────────────────────────────────────────────────
 //
@@ -298,6 +304,17 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     registerShortcuts();
 
+    // Downloads in the background and swaps itself on close. It will not
+    // install over a live recording — see electron/updater.js.
+    initUpdater({
+      recording: () => !!global.__isRecording,
+      onState: (state) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-state', state);
+        }
+      },
+    });
+
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
@@ -326,11 +343,22 @@ app.on('before-quit', (e) => {
   if (choice === 0) e.preventDefault();
 });
 
+/**
+ * Closing is the safe moment to swap the binary: nothing is recording by the
+ * time the window-close check above has passed. quitAndInstall takes over the
+ * quit, so this runs last.
+ */
+app.on('before-quit', () => {
+  if (global.__isRecording) return;
+  installOnQuitIfReady();
+});
+
 ipcMain.on('recording-state', (_event, isRecording) => {
   global.__isRecording = !!isRecording;
 });
 
 app.on('will-quit', async () => {
+  stopUpdater();
   globalShortcut.unregisterAll();
   // Flush whatever was open, so an interrupted session is still a valid prefix.
   for (const [id, handle] of writers) {

@@ -276,3 +276,53 @@ test.describe('recordings folder', () => {
     await expect(page.locator('#browser-storage')).toBeHidden();
   });
 });
+
+test.describe('self-update', () => {
+  let app;
+  let page;
+
+  test.beforeAll(async () => {
+    app = await launchApp();
+    page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+  });
+
+  test.afterAll(async () => { await app?.close(); });
+
+  test('the update channel is wired end to end', async () => {
+    // The point of this test is that the plumbing exists and answers: main
+    // process → preload → renderer. It cannot verify an actual download,
+    // because this is an unpackaged checkout with no release behind it — and
+    // reporting exactly that is the behaviour being checked.
+    const state = await page.evaluate(() => window.desktop.updates.state());
+
+    expect(state).toHaveProperty('status');
+    expect(state.currentVersion).toMatch(/^\d+\.\d+\.\d+$/);
+
+    // Running from source, so it must say so rather than silently doing
+    // nothing or pretending it is up to date.
+    expect(state.status).toBe('unsupported');
+    expect(state.reason).toMatch(/source/i);
+  });
+
+  test('settings shows the version and why updates are off here', async () => {
+    await page.click('[data-view="settings"]');
+    await expect(page.locator('#update-panel')).toBeVisible();
+
+    const version = await page.locator('#update-current').textContent();
+    expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+
+    await expect(page.locator('#update-status')).toContainText(/source/i);
+    // Nothing downloaded, so there is nothing to restart into.
+    await expect(page.locator('#btn-install-update')).toBeHidden();
+    await expect(page.locator('#update-banner')).toBeHidden();
+  });
+
+  test('checking by hand does not throw, even with no feed to reach', async () => {
+    await page.click('[data-view="settings"]');
+    await page.click('#btn-check-update');
+    // Still answering, not a dead button or an unhandled rejection.
+    await expect(page.locator('#update-status')).not.toHaveText('');
+    await expect(page.locator('#update-panel')).toBeVisible();
+  });
+});

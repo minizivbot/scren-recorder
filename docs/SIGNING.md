@@ -23,8 +23,8 @@ Free, and usually answered within a few days.
 
 1. Go to <https://www.microsoft.com/en-us/wdsi/filesubmission>
 2. Choose **Software developer**, then **Incorrectly detected as malware**
-3. Upload `TradeJournal-Setup-1.0.0.exe` and say what it is — a personal
-   trading journal that records the screen
+3. Upload `TradeJournal-Setup.exe` and say what it is — a personal trading
+   journal that records the screen
 
 **The catch:** it clears *that exact file*. Change one line of code and the
 next build has a different hash and warns again. Fine if you build rarely,
@@ -35,12 +35,35 @@ useless if you build every day.
 The cheapest real certificate, and the one to pick if you intend to keep
 building. Microsoft signs on your behalf; no hardware token to look after.
 
-1. Azure portal → create a **Trusted Signing** account
+1. Azure portal → create a **Trusted Signing** account and a certificate
+   profile
 2. Verify your identity (individual accounts are allowed)
-3. Add the credentials as repository secrets and every build signs itself —
-   see below
+3. Create an app registration and give it the **Trusted Signing Certificate
+   Profile Signer** role on that account
+4. Add these five repository secrets:
 
-Individual identity validation takes a few days.
+| Secret | What goes in it |
+| --- | --- |
+| `AZURE_TENANT_ID` | Directory (tenant) ID of the app registration |
+| `AZURE_CLIENT_ID` | Application (client) ID |
+| `AZURE_CLIENT_SECRET` | A client secret for that app registration |
+| `AZURE_CODE_SIGNING_NAME` | The Trusted Signing account name |
+| `AZURE_CERT_PROFILE_NAME` | The certificate profile name |
+
+Then add the endpoint to `build.win` in `package.json` — the one piece that
+is not a secret, because it varies by region:
+
+```json
+"azureSignOptions": {
+  "endpoint": "https://eus.codesigning.azure.net",
+  "codeSigningAccountName": "your-account",
+  "certificateProfileName": "your-profile"
+}
+```
+
+Individual identity validation takes a few days. Run `npm run check:build`
+after editing — it catches a mistyped key before a build wastes ten minutes
+on it.
 
 ## 3. An EV certificate — $400 or more a year
 
@@ -76,8 +99,15 @@ Push anything and the next build is signed. The build log says which it did.
 
 ## In the meantime
 
-For you, once per machine: **More info → Run anyway**, or right-click the file
-→ **Properties** → tick **Unblock** → OK.
+The dialog hides the button you need. It shows only **Don't run**, and
+**Run anyway** appears only after you click the small **More info** link under
+the message. So: **More info → Run anyway**. Or, before opening the file:
+right-click it → **Properties** → tick **Unblock** → **OK**.
+
+**This is once per machine, not once per version.** The app updates itself,
+and SmartScreen does not inspect updates that arrive that way — it checks
+files that came down through a browser. So the warning is a one-time cost of
+the first install, even though the app keeps changing.
 
 For anyone else you give it to, they will see the same screen and have to make
 the same decision about whether they trust you. That is the real cost of not

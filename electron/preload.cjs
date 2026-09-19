@@ -35,6 +35,21 @@ contextBridge.exposeInMainWorld('desktop', {
   revealRecordings: () => ipcRenderer.invoke('reveal-recordings'),
 
   /**
+   * Self-update. The app checks and downloads on its own; these are for
+   * showing what it is doing and for the "check now" button in Settings.
+   */
+  updates: {
+    state: () => ipcRenderer.invoke('update-state'),
+    check: () => ipcRenderer.invoke('update-check'),
+    installNow: () => ipcRenderer.invoke('update-install'),
+    onState: (fn) => {
+      const handler = (_event, state) => fn(state);
+      ipcRenderer.on('update-state', handler);
+      return () => ipcRenderer.removeListener('update-state', handler);
+    },
+  },
+
+  /**
    * Recordings on disk.
    *
    * The browser build keeps video in IndexedDB because it has nowhere else to
