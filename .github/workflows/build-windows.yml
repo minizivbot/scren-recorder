@@ -56,20 +56,32 @@ jobs:
       # A GitHub Actions artifact is always delivered as a zip — that is the
       # platform, not a setting. A Release attaches the .exe itself, so the
       # download is the installer rather than a zip containing one.
-      - name: Publish a release on a tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      #
+      # The release is rewritten on every build of this branch, so the download
+      # link never changes and always points at the newest app.
+      - name: Publish the download
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: latest
+          name: Trade Journal — latest build
           files: |
             dist/TradeJournal-Setup-*.exe
             dist/TradeJournal-Portable-*.exe
-          generate_release_notes: true
           body: |
-            Download **TradeJournal-Setup** below and run it.
+            ## Download
 
-            Windows will show "Windows protected your PC" the first time,
-            because the app is not signed with a paid certificate. Click
-            **More info** then **Run anyway**. It only asks once.
+            **TradeJournal-Setup-1.0.0.exe** — installer, adds a desktop and
+            Start menu shortcut. This is the one you want.
+
+            **TradeJournal-Portable-1.0.0.exe** — single file, installs nothing.
+
+            ### "Windows protected your PC"
+
+            Expected on first run, and not a sign of anything wrong with the
+            file. Click **More info**, then **Run anyway**. It only asks once.
+
+            Windows shows this for any app without a paid code-signing
+            certificate, regardless of what is inside it.
 
       - name: Report the build size
         shell: bash
