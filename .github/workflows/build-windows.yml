@@ -177,16 +177,27 @@ jobs:
       - name: Verify the download page still works
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           base="https://github.com/${{ github.repository }}/releases/download/latest"
+
+          # A freshly uploaded asset can take a few seconds to serve, so a
+          # single 404 here would fail a perfectly good build.
+          fetchable() {
+            for attempt in 1 2 3 4 5; do
+              code=$(curl -sL -o /dev/null -w '%{http_code}' -r 0-63 "$1")
+              case "$code" in
+                200|206) echo "  $1 -> HTTP $code"; return 0 ;;
+              esac
+              echo "  $1 -> HTTP $code (attempt $attempt)"
+              sleep 10
+            done
+            return 1
+          }
+
           for f in TradeJournal-Setup.exe latest.yml; do
-            code=$(curl -sL -o /dev/null -w '%{http_code}' -r 0-63 "$base/$f")
-            echo "$f -> HTTP $code"
-            case "$code" in
-              200|206) ;;
-              *) echo "$f is not downloadable"; exit 1 ;;
-            esac
+            fetchable "$base/$f" || { echo "$f is not downloadable"; exit 1; }
           done
+
           curl -sL "$base/latest.yml" | grep -q "1.0.${{ github.run_number }}" \
             || { echo "the published feed is not from this build"; exit 1; }
           echo "Download page OK."
