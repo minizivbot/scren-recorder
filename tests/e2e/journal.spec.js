@@ -238,3 +238,79 @@ test('statistics come only from trades, never from recordings or markers', async
   expect(body).not.toMatch(/\$\d/);          // no money either
   expect(body).not.toMatch(/\d+%/);          // no win rate
 });
+
+test('the journal note buttons actually do something', async ({ page }) => {
+  // Regression: these were wired to window.prompt(), which Electron does not
+  // implement — it returns null without showing anything, so the button did
+  // nothing at all in the desktop app and there was no error to notice.
+  await page.goto('/');
+  await page.click('[data-view="trades"]');
+  await page.click('#btn-add-trade');
+  await page.fill('input[name="r"]', '1');
+  await page.getByRole('button', { name: 'Save trade' }).click();
+  await page.click('#wizard-finish');
+
+  await page.click('[data-view="journal"]');
+  await page.getByRole('button', { name: 'Add note' }).first().click();
+
+  // A real dialog, in the page, not a native prompt.
+  await expect(page.locator('.wizard')).toBeVisible();
+  await expect(page.locator('.wizard-head h2')).toHaveText('How was this day?');
+
+  await page.locator('.star-btn').nth(2).click();
+  await page.fill('#day-note', 'Read it right, sized it wrong.');
+  await page.getByRole('button', { name: 'Save' }).click();
+
+  await expect(page.locator('.wizard')).toHaveCount(0);
+  const day = page.locator('.journal-day').first();
+  await expect(day).toContainText('Read it right, sized it wrong.');
+  await expect(day.locator('.star.is-on')).toHaveCount(3);
+
+  // And editing it back reopens with what was written.
+  await page.getByRole('button', { name: 'Edit note' }).first().click();
+  await expect(page.locator('#day-note')).toHaveValue('Read it right, sized it wrong.');
+  await expect(page.locator('.star-btn.is-on')).toHaveCount(3);
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.locator('.wizard')).toHaveCount(0);
+});
+
+test('a breakeven can still carry an R and a P&L', async ({ page }) => {
+  await page.goto('/');
+  await page.click('[data-view="trades"]');
+  await page.click('#btn-add-trade');
+
+  // Scratching a trade rarely costs exactly nothing — commissions come off.
+  await page.locator('.outcome-btn[data-outcome="breakeven"]').click();
+  await expect(page.locator('input[name="r"]')).toBeVisible();
+  await expect(page.locator('input[name="pnl"]')).toBeVisible();
+  await expect(page.locator('#amount-note')).toContainText('minus in front for commissions');
+
+  await page.fill('input[name="symbol"]', 'MES');
+  await page.fill('input[name="r"]', '0.1');
+  await page.fill('input[name="pnl"]', '-14');
+  await page.getByRole('button', { name: 'Save trade' }).click();
+  await page.click('#wizard-finish');
+
+  const trade = await page.evaluate(async () => {
+    const { listTrades } = await import('/src/trades.js');
+    return (await listTrades())[0];
+  });
+
+  // Kept as entered rather than flattened to zero.
+  expect(trade).toMatchObject({ outcome: 'breakeven', r: 0.1, pnl: -14 });
+
+  // Still out of the win rate — it is a classification, not a sign test.
+  await page.click('[data-view="dashboard"]');
+  const tile = (label) => page.locator('.stat-tile')
+    .filter({ has: page.locator('.stat-tile-label > span', { hasText: new RegExp(`^${label}$`) }) });
+  await expect(tile('Win rate')).toContainText('—');
+  await expect(tile('Net P&L')).toContainText('-$14');
+});
+
+test('the amount field is labelled P&L', async ({ page }) => {
+  await page.goto('/');
+  await page.click('[data-view="trades"]');
+  await page.click('#btn-add-trade');
+  await expect(page.locator('.field-grid.amounts')).toContainText('P&L');
+  await expect(page.locator('.field-grid.amounts')).toContainText('Risk multiple (R)');
+});

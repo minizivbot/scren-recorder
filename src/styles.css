@@ -616,9 +616,6 @@ body:not([data-desktop="true"]) .desktop-only { display: none !important; }
 .outcome-btn.is-on[data-outcome="loss"] strong { color: var(--rec); }
 .outcome-btn.is-on[data-outcome="breakeven"] { border-color: var(--muted); background: #8794a814; }
 
-/* Amounts are meaningless on a scratch. */
-.trade-form.is-breakeven .amounts,
-.trade-form.is-breakeven #amount-note { display: none; }
 .amounts input { font-variant-numeric: tabular-nums; }
 
 .day-totals { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
@@ -649,3 +646,9 @@ input:focus, select:focus, textarea:focus {
 /* A panel for something irreversible should not look like the others. */
 .panel-danger { border-color: #4a2226; }
 .panel-danger h3 { color: #ff9b9b; }
+
+.confirm-body {
+  margin: 0 0 4px; padding: 12px 14px; white-space: pre-wrap;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  font: 13px/1.6 ui-sans-serif, system-ui, sans-serif; color: var(--text);
+}

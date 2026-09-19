@@ -71,22 +71,21 @@ Where to get it:
 It is portable: it runs from wherever you put it and installs nothing.
 Recordings live in the app's own storage, not in the folder.
 
+The installer runs straight through — no options to pick. It installs for the
+current user and opens the app when it finishes.
+
 ### "Windows protected your PC"
 
-Expected on first run, and not a sign of anything wrong with the file.
-SmartScreen checks two things: whether the executable carries a paid code
-signing certificate, and whether enough people have already run it. A freshly
-built, unsigned app fails both.
+Click **More info**, then **Run anyway**. It only asks once per machine.
 
-Click **More info**, then **Run anyway**. It only asks once.
+Windows shows this for any program not signed with a paid certificate,
+whatever is inside it. It cannot be turned off from the code — no build flag,
+no installer format, no zip. [docs/SIGNING.md](docs/SIGNING.md) lists what
+actually works, including a **free** route: Microsoft will clear a specific
+file if you submit it, usually within a few days.
 
-Alternatively, close the dialog, right-click the .exe → **Properties** → tick
-**Unblock** at the bottom → **OK**.
-
-Making the warning go away permanently needs an Authenticode certificate
-(roughly $300-500/year), which is hard to justify for a tool only you run. If
-you ever want one, it slots into the `win` section of the electron-builder
-config in package.json.
+The build signs itself automatically once a certificate exists — add two
+repository secrets and nothing else changes.
 
 ### Or run it in a browser
 

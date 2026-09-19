@@ -34,9 +34,15 @@ export function dayKey(ts = Date.now()) {
  * sign is how a journal ends up with a loss recorded as a win.
  */
 export function applyOutcome(outcome, magnitude) {
-  const abs = Math.abs(Number(magnitude) || 0);
-  if (outcome === 'breakeven') return 0;
-  return outcome === 'loss' ? -abs : abs;
+  const value = Number(magnitude) || 0;
+
+  // A scratch is rarely exactly nothing — commissions still come off, and
+  // getting out a few ticks up is still a breakeven trade. So a breakeven
+  // keeps whatever was entered, including a minus, rather than being forced
+  // to zero and quietly losing it.
+  if (outcome === 'breakeven') return value;
+
+  return outcome === 'loss' ? -Math.abs(value) : Math.abs(value);
 }
 
 export function makeTrade(data = {}) {

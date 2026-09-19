@@ -247,11 +247,38 @@ describe('outcome and sign', () => {
     // journal ends up with a loss recorded as a win.
     expect(applyOutcome('loss', 100)).toBe(-100);
     expect(applyOutcome('win', 100)).toBe(100);
-    expect(applyOutcome('breakeven', 100)).toBe(0);
 
     // A minus already typed is not doubled back into a win.
     expect(applyOutcome('loss', -100)).toBe(-100);
     expect(applyOutcome('win', -100)).toBe(100);
+  });
+
+  it('lets a breakeven carry what it actually came to', () => {
+    // A scratch is rarely exactly nothing: commissions still come off, and
+    // getting out a few ticks up is still a breakeven trade. Forcing it to
+    // zero would quietly lose the difference.
+    expect(applyOutcome('breakeven', -12)).toBe(-12);
+    expect(applyOutcome('breakeven', 0.2)).toBe(0.2);
+    expect(applyOutcome('breakeven', '')).toBe(0);
+
+    const scratch = makeTrade({ outcome: 'breakeven', r: 0.1, pnl: -14 });
+    expect(scratch.outcome).toBe('breakeven');
+    expect(scratch.r).toBe(0.1);
+    expect(scratch.pnl).toBe(-14);
+  });
+
+  it('still keeps a breakeven out of the win rate, whatever it came to', () => {
+    // It is a classification the trader chose, not a sign test.
+    const s = computeStats([
+      makeTrade({ outcome: 'win', r: 2, pnl: 400, date: '2026-01-05' }),
+      makeTrade({ outcome: 'loss', r: 1, pnl: 200, date: '2026-01-05' }),
+      makeTrade({ outcome: 'breakeven', r: 0.1, pnl: -14, date: '2026-01-05' }),
+    ]);
+    expect(s.winRate).toBe(50);
+    expect(s.breakeven).toBe(1);
+    // And its amount still counts toward the totals.
+    expect(s.totalPnl).toBe(186);
+    expect(s.totalR).toBe(1.1);
   });
 
   it('keeps R and money on the same side as the outcome', () => {
@@ -260,9 +287,9 @@ describe('outcome and sign', () => {
     expect(trade.r).toBe(-1);
     expect(trade.pnl).toBe(-250);
 
-    const be = makeTrade({ outcome: 'breakeven', r: 2, pnl: 400 });
-    expect(be.r).toBe(0);
-    expect(be.pnl).toBe(0);
+    const empty = makeTrade({ outcome: 'breakeven' });
+    expect(empty.r).toBe(0);
+    expect(empty.pnl).toBe(0);
   });
 
   it('falls back to reading the sign for a record saved before outcomes were explicit', () => {

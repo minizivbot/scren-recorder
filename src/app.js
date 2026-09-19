@@ -13,8 +13,9 @@ import { isDesktop, initDesktop, toAccelerators } from './desktop.js';
 import { $, el, clear, formatDate, formatClock, formatDuration } from './dom.js';
 import { renderDashboard, renderJournal, renderTrades } from './views.js';
 import { SessionWizard } from './wizard.js';
-import { getDayReview, saveDayReview } from './trades.js';
+import { getDayReview } from './trades.js';
 import { eraseEverything } from './erase.js';
+import { confirmTyped } from './dialog.js';
 
 const KIND_LABEL = { entry: 'Entry', exit: 'Exit', note: 'Note' };
 
@@ -586,19 +587,19 @@ function openDoc(name) {
 }
 
 /**
- * Two confirmations, because this cannot be undone and there is no copy
+ * Typed confirmation, because this cannot be undone and there is no copy
  * anywhere else to recover from.
  */
 async function confirmErase() {
   const summary = await describeEverything();
-  const first = window.confirm(
-    `Delete everything?\n\n${summary}\n\n`
-    + 'This removes the recordings from disk as well. It cannot be undone.',
-  );
-  if (!first) return;
+  const ok = await confirmTyped({
+    title: 'Delete everything?',
+    body: `${summary}\n\nThe recordings are removed from disk as well.\nThis cannot be undone.`,
+    word: 'DELETE',
+    confirmLabel: 'Delete everything',
+  });
 
-  const typed = window.prompt('Type DELETE to confirm.');
-  if (typed !== 'DELETE') {
+  if (!ok) {
     $('#erase-state').textContent = 'Cancelled — nothing was deleted.';
     return;
   }
@@ -676,15 +677,17 @@ function wirePois() {
   });
 }
 
-/** The journal's "add note" opens the same day review the wizard uses. */
+/**
+ * The journal's note button opens the same rating-and-note step the
+ * end-of-session review starts with, so a note written later is the same
+ * thing as one written at the time.
+ *
+ * This used to be a window.prompt(). Electron does not implement prompt() —
+ * it returns null without showing anything — so the button did nothing at all
+ * in the desktop app.
+ */
 async function editDayNote(day) {
-  const existing = await getDayReview(day.date);
-  const note = window.prompt(
-    `Notes for ${day.date}`,
-    existing?.note || '',
-  );
-  if (note === null) return;
-  await saveDayReview({ date: day.date, rating: existing?.rating || 0, note });
+  await wizard.openDayReview(day.date);
   await refreshView('journal');
 }
 

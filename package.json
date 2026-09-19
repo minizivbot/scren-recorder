@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Continuous screen-recorded trade journal with timestamped markers.",
+  "description": "Trading journal with the session recorded underneath it.",
   "scripts": {
     "dev": "node scripts/serve.mjs",
     "test": "vitest run",
@@ -57,7 +57,10 @@
         }
       ],
       "icon": "build/icon.png",
-      "artifactName": "TradeJournal-Setup-${version}.${ext}"
+      "artifactName": "TradeJournal-Setup-${version}.${ext}",
+      "publisherName": "Ziv Nahum",
+      "legalTrademarks": "",
+      "signAndEditExecutable": true
     },
     "portable": {
       "artifactName": "TradeJournal-Portable-${version}.${ext}"
@@ -69,13 +72,17 @@
       "icon": "build/icon.png",
       "category": "Utility"
     },
-    "copyright": "Trade Journal",
+    "copyright": "Copyright \u00a9 2026 Ziv Nahum",
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Trade Journal",
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
       "artifactName": "TradeJournal-Setup-${version}.${ext}",
       "uninstallDisplayName": "Trade Journal"
     },
@@ -87,5 +94,7 @@
       "en-US"
     ]
   },
-  "author": "Ziv"
+  "author": {
+    "name": "Ziv Nahum"
+  }
 }

@@ -41,8 +41,26 @@ jobs:
 
       # --publish never: electron-builder sees CI and would otherwise try to
       # push a GitHub release on every build, which fails without a token and
-      # is not what a branch build should do anyway. Releases are cut by tag.
+      # is not what a branch build should do anyway.
+      #
+      # Signing: electron-builder picks up CSC_LINK and CSC_KEY_PASSWORD from
+      # the environment on its own. Add those two repository secrets and every
+      # build from then on is signed — no change to any file here. Without
+      # them the build is unsigned and Windows shows SmartScreen on first run.
       - run: npm run dist:win
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+
+      - name: Say whether this build is signed
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.WINDOWS_CERT_BASE64 }}" ]; then
+            echo "Signed build — SmartScreen should not warn."
+          else
+            echo "UNSIGNED build. Windows will show SmartScreen on first run."
+            echo "Add the WINDOWS_CERT_BASE64 and WINDOWS_CERT_PASSWORD secrets to fix that."
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -75,13 +93,19 @@ jobs:
 
             **TradeJournal-Portable-1.0.0.exe** — single file, installs nothing.
 
+            The installer runs straight through — no options to pick. It
+            installs for the current user and opens the app when it is done.
+
             ### "Windows protected your PC"
 
-            Expected on first run, and not a sign of anything wrong with the
-            file. Click **More info**, then **Run anyway**. It only asks once.
+            Click **More info**, then **Run anyway**. It only asks once per
+            machine.
 
-            Windows shows this for any app without a paid code-signing
-            certificate, regardless of what is inside it.
+            Windows shows this for any program that is not signed with a paid
+            certificate, whatever is inside it. It is a statement about the
+            certificate, not about the file. See
+            [docs/SIGNING.md](https://github.com/minizivbot/scren-recorder/blob/main/docs/SIGNING.md)
+            for how to make it stop.
 
       - name: Report the build size
         shell: bash

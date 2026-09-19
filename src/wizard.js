@@ -39,6 +39,22 @@ export class SessionWizard {
    *                           trade form is opened on its own
    * @param {object} existing  a trade being edited, if any
    */
+  /**
+   * The day's rating and note on their own, for the journal's Edit note button.
+   * The same step the end-of-session review opens with, so a note written later
+   * is the same thing as one written at the time.
+   */
+  async openDayReview(date) {
+    this.session = null;
+    this.date = date;
+    this.savedTrades = [];
+
+    this.overlay = el('div', { class: 'wizard-overlay' });
+    document.body.append(this.overlay);
+
+    await this._dayStep(await getDayReview(date), { standalone: true });
+  }
+
   async open(session, { editTrade = null } = {}) {
     const date = editTrade?.date || (session ? dayKey(session.startedAt) : dayKey());
 
@@ -71,7 +87,7 @@ export class SessionWizard {
 
   // ── step 1: the day ───────────────────────────────────────────────────────
 
-  async _dayStep(existing) {
+  async _dayStep(existing, { standalone = false } = {}) {
     let rating = existing?.rating || 0;
     const ratingRow = el('div', { class: 'rating-row' });
     const ratingLabel = el('span', { class: 'rating-label muted' },
@@ -102,8 +118,8 @@ export class SessionWizard {
 
     this._panel(
       el('div', { class: 'wizard-head' },
-        el('span', { class: 'wizard-step' }, 'Step 1 of 2'),
-        el('h2', {}, 'How was your day?'),
+        standalone ? null : el('span', { class: 'wizard-step' }, 'Step 1 of 2'),
+        el('h2', {}, standalone ? 'How was this day?' : 'How was your day?'),
         this.session ? el('p', { class: 'muted' },
           `Session recorded · ${formatDuration(this.session.durationMs || 0)}`) : null,
       ),
@@ -117,14 +133,16 @@ export class SessionWizard {
           + 'and a lucky winning one should not read the same later.'),
       ),
       el('div', { class: 'wizard-actions' },
-        el('button', { class: 'btn btn-ghost', type: 'button', onclick: () => this.close() }, 'Skip'),
+        el('button', { class: 'btn btn-ghost', type: 'button', onclick: () => this.close() },
+          standalone ? 'Cancel' : 'Skip'),
         el('button', {
           class: 'btn btn-primary', type: 'button', id: 'wizard-next',
           onclick: async () => {
             await saveDayReview({ date: this.date, rating, note: note.value });
-            this._askedTradesStep();
+            if (standalone) this.close();
+            else this._askedTradesStep();
           },
-        }, 'Next'),
+        }, standalone ? 'Save' : 'Next'),
       ),
     );
   }
@@ -187,10 +205,11 @@ export class SessionWizard {
         el('span', {}, sub),
       )));
 
-      // Amount inputs are meaningless on a scratch, so they go away.
-      form?.classList.toggle('is-breakeven', outcome === 'breakeven');
       amountNote.textContent = outcome === 'breakeven'
-        ? 'A breakeven trade is stored as zero, in both R and money.'
+        // A scratch is rarely exactly nothing: commissions still come off, and
+        // getting out a few ticks up is still a breakeven trade.
+        ? 'Leave these empty for a clean scratch, or enter what it actually came '
+          + 'to — put a minus in front for commissions.'
         : outcome === 'loss'
           ? 'Type what you lost as a plain positive number — it is recorded as a loss.'
           : 'Type what you made as a plain positive number.';
@@ -245,15 +264,15 @@ export class SessionWizard {
       el('div', { class: 'field-grid amounts' },
         el('label', {}, 'Risk multiple (R)',
           el('input', {
-            name: 'r', type: 'number', step: '0.01', min: '0', inputmode: 'decimal',
+            name: 'r', type: 'number', step: '0.01', inputmode: 'decimal',
             placeholder: '2',
-            value: editing ? String(Math.abs(editing.r)) : '',
+            value: editing?.r ? String(signedForR(editing)) : '',
           })),
-        el('label', {}, 'Amount',
+        el('label', {}, 'P&L',
           el('input', {
-            name: 'pnl', type: 'number', step: '0.01', min: '0', inputmode: 'decimal',
+            name: 'pnl', type: 'number', step: '0.01', inputmode: 'decimal',
             placeholder: '250',
-            value: editing?.pnl ? String(Math.abs(editing.pnl)) : '',
+            value: editing?.pnl ? String(signedFor(editing)) : '',
           })),
       ),
       amountNote,
@@ -325,6 +344,21 @@ export class SessionWizard {
       ),
     );
   }
+}
+
+/**
+ * What to put back in the box when editing.
+ *
+ * Win and loss carry their sign from the outcome, so the box shows the plain
+ * magnitude. A breakeven's amount is whatever it actually was, so it is shown
+ * as stored — minus sign and all.
+ */
+function signedFor(trade) {
+  return trade.outcome === 'breakeven' ? trade.pnl : Math.abs(trade.pnl);
+}
+
+function signedForR(trade) {
+  return trade.outcome === 'breakeven' ? trade.r : Math.abs(trade.r);
 }
 
 function select(name, value, options) {
