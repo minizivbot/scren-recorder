@@ -35,6 +35,11 @@ jobs:
 
       - run: npm ci
 
+      # Fails in seconds on a bad build config, rather than after the whole
+      # test suite has run. electron-builder rejects unknown keys but will not
+      # say which one, so this names it.
+      - run: npm run check:build
+
       # The recorder core is shared with the browser version, so the unit tests
       # guard the app too. A broken build should not ship an .exe.
       - run: npm test
