@@ -645,3 +645,7 @@ input:focus, select:focus, textarea:focus {
 .journal-day, .trades-table, .table-wrap { box-shadow: var(--shadow); }
 .table-wrap { border-color: var(--line-soft); }
 .trades-table th { background: #141926; }
+
+/* A panel for something irreversible should not look like the others. */
+.panel-danger { border-color: #4a2226; }
+.panel-danger h3 { color: #ff9b9b; }

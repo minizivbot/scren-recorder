@@ -10,6 +10,21 @@ memory.
 
 Nothing is ever cut. Review is a seek, not a clip.
 
+## Your data
+
+**Nothing you put into this app leaves your computer.** No server, no account,
+no network request of any kind — no analytics, no crash reporting, no
+third-party scripts or fonts. Recordings are ordinary `.webm` files in a folder
+you choose; trades and notes are in a local database on your machine.
+
+Because nothing was ever sent anywhere, deleting locally *is* deletion:
+**Settings → Delete all data** removes every recording file, trade, note and
+setting, and there is no copy elsewhere to ask anyone to remove.
+
+See [Privacy](docs/PRIVACY.md) and [Terms of use](docs/TERMS.md). Those describe
+the app honestly; they are not legal advice, and if you hand this to other
+people — especially for money — have a lawyer look at them first.
+
 ## Where the numbers come from
 
 Every statistic is computed from **trades you enter by hand**, and from nothing

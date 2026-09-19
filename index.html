@@ -229,6 +229,39 @@
             </p>
           </div>
         </div>
+        <div class="panel">
+          <h3>About &amp; legal</h3>
+          <p class="setting-help">
+            <strong>Nothing you put into this app leaves your computer.</strong>
+            There is no server, no account and no network request of any kind — no analytics,
+            no crash reporting, no third-party scripts. Recordings are ordinary .webm files in
+            the folder above; trades and notes are in a local database on this machine.
+          </p>
+          <p class="setting-help">
+            The statistics are computed from trades you entered by hand. They are not read from
+            your broker and not reconciled against anything.
+            <strong>Your broker's statement is the authoritative record of your account; this
+            app is not.</strong> Nothing here is trading advice.
+          </p>
+          <div class="setting-control">
+            <button class="btn btn-ghost" id="btn-terms" type="button">Terms of use</button>
+            <button class="btn btn-ghost" id="btn-privacy" type="button">Privacy</button>
+            <span class="muted" id="app-version"></span>
+          </div>
+        </div>
+
+        <div class="panel panel-danger">
+          <h3>Delete all data</h3>
+          <p class="setting-help">
+            Removes every recording file, every trade, every note and marker, and your settings.
+            Because nothing was ever sent anywhere, this is the whole of it — there is no copy
+            elsewhere to ask anyone to remove.
+          </p>
+          <div class="setting-control">
+            <button class="btn btn-danger" id="btn-erase" type="button">Delete everything</button>
+            <span class="muted" id="erase-state"></span>
+          </div>
+        </div>
       </section>
 
       <!-- ─────────────────────── review ─────────────────────── -->

@@ -14,6 +14,7 @@ import { $, el, clear, formatDate, formatClock, formatDuration } from './dom.js'
 import { renderDashboard, renderJournal, renderTrades } from './views.js';
 import { SessionWizard } from './wizard.js';
 import { getDayReview, saveDayReview } from './trades.js';
+import { eraseEverything } from './erase.js';
 
 const KIND_LABEL = { entry: 'Entry', exit: 'Exit', note: 'Note' };
 
@@ -521,6 +522,10 @@ function wireSettings() {
 
   $('#btn-open-folder').addEventListener('click', () => window.desktop.recordings.reveal());
 
+  $('#btn-terms').addEventListener('click', () => openDoc('TERMS'));
+  $('#btn-privacy').addEventListener('click', () => openDoc('PRIVACY'));
+  $('#btn-erase').addEventListener('click', () => confirmErase());
+
   $('#btn-persist').addEventListener('click', async () => {
     const granted = await requestPersistentStorage();
     $('#persist-state').textContent = granted
@@ -569,6 +574,62 @@ async function renderRecordingsFolder() {
   $('#recordings-usage').textContent = usage.files
     ? `${usage.files} recording${usage.files === 1 ? '' : 's'}, ${formatBytes(usage.bytes)}`
     : 'No recordings in this folder yet.';
+}
+
+// ─────────────────────────── legal and data ───────────────────────────
+
+/** Opens a document in the real browser rather than inside the app window. */
+function openDoc(name) {
+  const url = `https://github.com/minizivbot/scren-recorder/blob/main/docs/${name}.md`;
+  if (window.desktop) window.open(url, '_blank');
+  else window.open(url, '_blank', 'noopener');
+}
+
+/**
+ * Two confirmations, because this cannot be undone and there is no copy
+ * anywhere else to recover from.
+ */
+async function confirmErase() {
+  const summary = await describeEverything();
+  const first = window.confirm(
+    `Delete everything?\n\n${summary}\n\n`
+    + 'This removes the recordings from disk as well. It cannot be undone.',
+  );
+  if (!first) return;
+
+  const typed = window.prompt('Type DELETE to confirm.');
+  if (typed !== 'DELETE') {
+    $('#erase-state').textContent = 'Cancelled — nothing was deleted.';
+    return;
+  }
+
+  $('#erase-state').textContent = 'Deleting…';
+  const removed = await eraseEverything();
+
+  settings = loadSettings();
+  renderSettings();
+  $('#erase-state').textContent =
+    `Deleted ${removed.sessions} recording${removed.sessions === 1 ? '' : 's'} `
+    + `and ${removed.trades} trade${removed.trades === 1 ? '' : 's'}`
+    + `${removed.bytes ? `, freeing ${formatBytes(removed.bytes)}` : ''}.`;
+
+  await refreshAll();
+}
+
+/** Says what is about to go, so the confirmation is not an abstraction. */
+async function describeEverything() {
+  const [sessions, trades] = await Promise.all([listSessions(), listTradesForCount()]);
+  const bytes = sessions.reduce((sum, s) => sum + (s.bytes || 0), 0);
+  return [
+    `${sessions.length} recording${sessions.length === 1 ? '' : 's'} (${formatBytes(bytes)})`,
+    `${trades} trade${trades === 1 ? '' : 's'}`,
+    'all day notes, markers and settings',
+  ].join('\n');
+}
+
+async function listTradesForCount() {
+  const { listTrades } = await import('./trades.js');
+  return (await listTrades()).length;
 }
 
 // ─────────────────────────── setups (POIs) ───────────────────────────
